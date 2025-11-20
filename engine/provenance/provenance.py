@@ -116,6 +116,20 @@ def create_provenance_pdf(shift_logs: List[Dict[str, Any]], output_path: str, pr
                 with open(tmp_path, "wb") as f:
                     f.write(image_data)
                 
+                # OPTIMIZATION: Resize image if it's too large using PIL (if available)
+                try:
+                    from PIL import Image
+                    with Image.open(tmp_path) as img:
+                        # Resize to max width of 800px to speed up PDF generation
+                        if img.width > 800:
+                            ratio = 800 / img.width
+                            new_height = int(img.height * ratio)
+                            img = img.resize((800, new_height), Image.Resampling.LANCZOS)
+                            # Save back to temp path with compression
+                            img.save(tmp_path, optimize=True, quality=60)
+                except ImportError:
+                    pass # PIL not installed, skip optimization
+                
                 # Insert into PDF
                 pdf.ln(5)
                 pdf.image(tmp_path, w=100) # 100mm width

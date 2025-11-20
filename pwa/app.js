@@ -3,27 +3,39 @@ const API_URL = 'http://localhost:5000';
 let currentLogs = [];
 let projects = [];
 let activeProject = null;
-
 let fieldLogs = [];
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
-    loadProjects();
-    loadFieldLogs();
+    window.loadProjects();
+    window.loadFieldLogs();
     updateProjectSelect();
 });
 
 // --- Persistence ---
 
-function loadFieldLogs() {
+// Load field logs from LocalStorage
+window.loadFieldLogs = function () {
     const stored = localStorage.getItem('veritas_field_logs');
     if (stored) {
         fieldLogs = JSON.parse(stored);
     }
+    if (typeof renderFieldLogs === 'function') {
+        renderFieldLogs();
+    }
 }
 
+// Save field logs to LocalStorage
 function saveFieldLogs() {
     localStorage.setItem('veritas_field_logs', JSON.stringify(fieldLogs));
+    if (typeof renderFieldLogs === 'function') {
+        renderFieldLogs();
+    }
+
+    // Trigger Sync
+    if (window.syncClient && currentUser) {
+        window.syncClient.sync();
+    }
 }
 
 // --- Export / Import ---
@@ -41,7 +53,7 @@ function exportData() {
         exported_at: new Date().toISOString(),
         version: "v1",
         projects: projects,
-        segments: [], // Placeholder as we don't strictly manage segments array yet
+        segments: [],
         field_logs: fieldLogs
     };
 
@@ -70,7 +82,6 @@ function importData(event) {
         try {
             const data = JSON.parse(e.target.result);
 
-            // Basic Validation
             if (!data.projects || !Array.isArray(data.projects) || !data.field_logs || !Array.isArray(data.field_logs)) {
                 alert("Invalid import file: Missing projects or field_logs arrays.");
                 return;
@@ -80,22 +91,19 @@ function importData(event) {
                 return;
             }
 
-            // Merge Projects
             let newProjectsCount = 0;
             data.projects.forEach(importedProj => {
                 const existingIndex = projects.findIndex(p => p.project_id === importedProj.project_id);
                 if (existingIndex >= 0) {
-                    projects[existingIndex] = importedProj; // Overwrite
+                    projects[existingIndex] = importedProj;
                 } else {
                     projects.push(importedProj);
                     newProjectsCount++;
                 }
             });
 
-            // Merge Field Logs
             let newLogsCount = 0;
             data.field_logs.forEach(importedLog => {
-                // Ensure imported log has entry_id (generate if missing for legacy support)
                 if (!importedLog.entry_id) {
                     importedLog.entry_id = crypto.randomUUID();
                 }
@@ -105,14 +113,12 @@ function importData(event) {
                     fieldLogs.push(importedLog);
                     newLogsCount++;
                 }
-                // If exists, we skip (idempotent)
             });
 
             saveProjects();
             saveFieldLogs();
-            updateProjectSelect(activeProject ? activeProject.project_id : ""); // Refresh UI
+            updateProjectSelect(activeProject ? activeProject.project_id : "");
 
-            // Clear input
             event.target.value = '';
 
             alert(`Import Successful!\nProjects added: ${newProjectsCount}\nLogs added: ${newLogsCount}`);
@@ -127,19 +133,26 @@ function importData(event) {
 
 // --- Project Management ---
 
-function loadProjects() {
+// Load projects from LocalStorage
+window.loadProjects = function () {
     const stored = localStorage.getItem('veritas_projects');
     if (stored) {
         projects = JSON.parse(stored);
     }
+    updateProjectSelect();
 }
 
+// Save projects to LocalStorage
 function saveProjects() {
     localStorage.setItem('veritas_projects', JSON.stringify(projects));
-    // Preserve current selection
     const select = document.getElementById('projectSelect');
     const currentVal = select.value;
     updateProjectSelect(currentVal);
+
+    // Trigger Sync
+    if (window.syncClient && currentUser) {
+        window.syncClient.sync();
+    }
 }
 
 function updateProjectSelect(selectedValue = "") {
