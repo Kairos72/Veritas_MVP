@@ -1,0 +1,42 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Segment",
+  "description": "Describes a road segment",
+  "type": "object",
+  "properties": {
+    "segment_id": {
+      "type": "string",
+      "description": "Unique identifier for the segment"
+    },
+    "length_m": {
+      "type": "number",
+      "description": "Length of the segment in meters"
+    },
+    "width_m": {
+      "type": "number",
+      "description": "Width of the segment in meters"
+    },
+    "thickness_m": {
+      "type": "number",
+      "description": "Thickness of the segment in meters (optional)"
+    },
+    "project_id": {
+      "type": "string",
+      "description": "ID of the project this segment belongs to"
+    },
+    "chainage_start": {
+      "type": "number",
+      "description": "Starting chainage of the segment (optional)"
+    },
+    "area_m2": {
+      "type": "number",
+      "description": "Area of the segment in square meters (optional)"
+    }
+  },
+  "required": [
+    "segment_id",
+    "project_id",
+    "length_m",
+    "width_m"
+  ]
+}

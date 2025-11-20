@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Veritas MVP Demo</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="manifest" href="manifest.json">
+</head>
+
+<body>
+    <div class="container">
+        <header>
+            <h1>Veritas MVP Demo</h1>
+            <p>Construction Data Engine & Provenance System</p>
+        </header>
+
+        <!-- Project Management Section -->
+        <section class="card" id="projectSection">
+            <div class="section-header">
+                <h2>Project Selection</h2>
+                <div style="display: flex; gap: 10px;">
+                    <button id="exportBtn" class="btn secondary small">Export Data (JSON)</button>
+                    <button id="importBtn" class="btn secondary small">Import Data</button>
+                    <input type="file" id="importFile" accept=".json" style="display: none;">
+                    <button id="newProjectBtn" class="btn secondary small">New Project</button>
+                </div>
+            </div>
+
+            <div id="projectSelectorContainer">
+                <div class="form-group">
+                    <label for="projectSelect">Select Active Project:</label>
+                    <select id="projectSelect">
+                        <option value="">-- Select a Project --</option>
+                    </select>
+                </div>
+                <div id="activeProjectDisplay"
+                    style="display:none; padding: 10px; background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 4px;">
+                    <strong>Active Project:</strong> <span id="activeProjectTitle"></span> (<span
+                        id="activeProjectId"></span>)
+                </div>
+            </div>
+
+            <!-- New Project Form (Hidden by default) -->
+            <form id="newProjectForm"
+                style="display: none; margin-top: 20px; border-top: 1px solid #eee; padding-top: 20px;">
+                <h3>Create New Project</h3>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Project ID</label>
+                        <input type="text" id="projId" required placeholder="PROJ-001">
+                    </div>
+                    <div class="form-group">
+                        <label>Contract ID</label>
+                        <input type="text" id="contractId" required placeholder="CTR-2025-XYZ">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Project Title</label>
+                    <input type="text" id="projTitle" required placeholder="Barangay Road Improvement">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Contractor</label>
+                        <input type="text" id="contractor" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Owner</label>
+                        <input type="text" id="owner" required>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Type</label>
+                        <input type="text" id="projType" required placeholder="PCCP Road">
+                    </div>
+                    <div class="form-group">
+                        <label>Location</label>
+                        <input type="text" id="location" required>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Start Date</label>
+                        <input type="date" id="startDate" required>
+                    </div>
+                    <div class="form-group">
+                        <label>End Date</label>
+                        <input type="date" id="endDate">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Notes</label>
+                    <input type="text" id="notes">
+                </div>
+                <div class="form-row">
+                    <button type="submit" class="btn primary">Save Project</button>
+                    <button type="button" id="cancelProjectBtn" class="btn secondary"
+                        style="background-color: #9ca3af;">Cancel</button>
+                </div>
+            </form>
+        </section>
+
+        <!-- Mode Selection Tabs -->
+        <div class="tabs">
+            <button class="tab-btn active" onclick="switchTab('simulation')">Simulation Mode</button>
+            <button class="tab-btn" onclick="switchTab('fieldEntry')">Field Entry Mode</button>
+        </div>
+
+        <!-- Simulation Mode -->
+        <div id="simulation" class="tab-content">
+            <section class="card">
+                <h2>1. Run Simulation</h2>
+                <form id="simForm">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="segmentId">Segment ID</label>
+                            <input type="text" id="segmentId" value="SEG-001" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="length">Length (m)</label>
+                            <input type="number" id="length" value="50" required>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="width">Width (m)</label>
+                            <input type="number" id="width" value="3.5" step="0.1" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="days">Duration (Days)</label>
+                            <input type="number" id="days" value="10" required>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn primary">Run Simulation</button>
+                </form>
+            </section>
+
+            <section class="card" id="resultsSection" style="display: none;">
+                <div class="section-header">
+                    <h2>2. Simulation Results</h2>
+                    <button id="provenanceBtn" class="btn primary">Generate Provenance PDF</button>
+                </div>
+                <div class="table-container">
+                    <table id="logsTable">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Segment</th>
+                                <th>Output (Blocks)</th>
+                                <th>Cumulative</th>
+                                <th>Remaining</th>
+                                <th>Weather</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </section>
+        </div>
+
+        <!-- Field Entry Mode -->
+        <div id="fieldEntry" class="tab-content" style="display: none;">
+            <section class="card">
+                <h2>Daily Field Entry</h2>
+                <form id="fieldForm">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Date</label>
+                            <input type="date" id="fieldDate" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Segment ID</label>
+                            <input type="text" id="fieldSegmentId" placeholder="SEG-001" required>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Segment Length (m)</label>
+                            <input type="number" id="fieldSegLength" value="50" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Block Length (m)</label>
+                            <input type="number" id="fieldBlockLength" value="1.0" step="0.1" required>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Blocks Completed Today</label>
+                            <input type="number" id="fieldBlocks" step="0.01" placeholder="0.75" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Crew Size</label>
+                            <input type="number" id="fieldCrew" value="5" required>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Weather</label>
+                            <select id="fieldWeather">
+                                <option value="clear">Clear</option>
+                                <option value="cloudy">Cloudy</option>
+                                <option value="rain">Rain</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>GPS Location</label>
+                            <div style="display: flex; gap: 10px; align-items: flex-end;">
+                                <button type="button" id="gpsBtn" class="btn secondary" style="margin-bottom: 0;">Get
+                                    GPS Location</button>
+                                <span id="gpsStatus" style="font-size: 0.8em; color: #666;"></span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Latitude</label>
+                            <input type="text" id="fieldLat" readonly placeholder="Lat"
+                                style="background-color: #f9f9f9;">
+                        </div>
+                        <div class="form-group">
+                            <label>Longitude</label>
+                            <input type="text" id="fieldLong" readonly placeholder="Long"
+                                style="background-color: #f9f9f9;">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Notes</label>
+                        <textarea id="fieldNotes" rows="2"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>Field Photo</label>
+                        <div style="display: flex; gap: 10px; margin-bottom: 5px;">
+                            <button type="button" id="btnCamera" class="btn secondary" style="flex: 1;">Take
+                                Photo</button>
+                            <button type="button" id="btnUpload" class="btn secondary" style="flex: 1;">Upload
+                                File</button>
+                        </div>
+                        <!-- Hidden inputs -->
+                        <input type="file" id="fieldPhoto" accept="image/*" style="display: none;">
+                        <input type="file" id="fieldPhotoCamera" accept="image/*" capture="environment"
+                            style="display: none;">
+
+                        <div id="photoPreviewContainer" style="display:none; margin-top: 10px;">
+                            <img id="photoPreview" src="" alt="Preview"
+                                style="max-width: 150px; border: 1px solid #ccc; padding: 2px;">
+                            <div id="photoInfo" style="font-size: 0.8em; color: #666;"></div>
+                            <button type="button" id="clearPhotoBtn" class="btn small"
+                                style="background: #ef4444; color: white; margin-top: 5px; padding: 2px 8px; font-size: 0.8em;">Remove
+                                Photo</button>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn primary">Add Entry</button>
+                </form>
+            </section>
+
+            <section class="card" id="fieldResultsSection" style="display: none;">
+                <div class="section-header">
+                    <h2>Field Logs</h2>
+                    <div style="display: flex; gap: 10px;">
+                        <button id="fieldProvenanceLocalBtn" class="btn primary"
+                            style="background-color: #10b981;">Generate Local PDF (Offline)</button>
+                        <button id="fieldProvenanceBtn" class="btn secondary">Generate Server PDF</button>
+                    </div>
+                </div>
+                <div class="table-container">
+                    <table id="fieldLogsTable">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Segment</th>
+                                <th>Blocks</th>
+                                <th>Cumulative (Blocks)</th>
+                                <th>Remaining (Blocks)</th>
+                                <th>Remaining (m)</th>
+                                <th>Weather</th>
+                                <th>Crew</th>
+                                <th>Location</th>
+                                <th>Photo</th>
+                                <th>Notes</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </section>
+        </div>
+
+        <!-- Provenance Results -->
+        <div id="provenanceResultsContainer" style="margin-top: 20px;">
+            <!-- Local Result -->
+            <section class="card" id="localProvenanceSection" style="display: none; border-left: 5px solid #10b981;">
+                <h3>Local Provenance Record (Offline)</h3>
+                <div class="provenance-result">
+                    <div class="result-item">
+                        <span class="label">Status:</span>
+                        <span class="value success">Generated Successfully</span>
+                    </div>
+                    <div class="result-item">
+                        <span class="label">SHA-256 Hash:</span>
+                        <code class="hash-value" id="localHashValue">...</code>
+                    </div>
+                    <div class="result-item">
+                        <span class="label">Document:</span>
+                        <a href="#" id="localPdfLink" target="_blank" class="btn small">Download Local PDF</a>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Server Result -->
+            <section class="card" id="serverProvenanceSection" style="display: none; border-left: 5px solid #3b82f6;">
+                <h3>Server Provenance Record (Veritas Engine)</h3>
+                <div class="provenance-result">
+                    <div class="result-item">
+                        <span class="label">Status:</span>
+                        <span class="value success">Generated Successfully</span>
+                    </div>
+                    <div class="result-item">
+                        <span class="label">SHA-256 Hash:</span>
+                        <code class="hash-value" id="serverHashValue">...</code>
+                    </div>
+                    <div class="result-item">
+                        <span class="label">Document:</span>
+                        <a href="#" id="serverPdfLink" target="_blank" class="btn small">Download Server PDF</a>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </div>
+    <script src="jspdf.min.js"></script>
+    <script src="pdf_local.js"></script>
+    <script src="app.js"></script>
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('./sw.js')
+                    .then(registration => {
+                        console.log('ServiceWorker registration successful with scope: ', registration.scope);
+                    })
+                    .catch(err => {
+                        console.log('ServiceWorker registration failed: ', err);
+                    });
+            });
+        }
+    </script>
+</body>
+
+</html>

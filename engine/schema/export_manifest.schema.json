@@ -1,0 +1,44 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Veritas Export Manifest",
+    "description": "Schema for exporting and importing Veritas project data and field logs.",
+    "type": "object",
+    "properties": {
+        "exported_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Timestamp when the export was created."
+        },
+        "version": {
+            "type": "string",
+            "description": "Version of the export format (e.g., 'v1')."
+        },
+        "projects": {
+            "type": "array",
+            "description": "List of projects.",
+            "items": {
+                "$ref": "project.schema.json"
+            }
+        },
+        "segments": {
+            "type": "array",
+            "description": "List of road segments (optional).",
+            "items": {
+                "$ref": "segment.schema.json"
+            }
+        },
+        "field_logs": {
+            "type": "array",
+            "description": "List of daily field logs.",
+            "items": {
+                "$ref": "shift_log.schema.json"
+            }
+        }
+    },
+    "required": [
+        "exported_at",
+        "version",
+        "projects",
+        "field_logs"
+    ]
+}

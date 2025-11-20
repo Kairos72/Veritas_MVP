@@ -1,0 +1,70 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Shift Log",
+    "description": "A per-day / per-shift log entry",
+    "type": "object",
+    "properties": {
+        "entry_id": {
+            "type": "string",
+            "description": "Unique identifier for the log entry"
+        },
+        "date": {
+            "type": "string",
+            "format": "date",
+            "description": "Date of the shift (YYYY-MM-DD)"
+        },
+        "segment_id": {
+            "type": "string",
+            "description": "ID of the segment being worked on"
+        },
+        "shift_output_blocks": {
+            "type": "number",
+            "description": "Blocks completed this shift (can be fractional)"
+        },
+        "cumulative_blocks": {
+            "type": "number",
+            "description": "Total blocks completed so far"
+        },
+        "remaining_blocks": {
+            "type": "number",
+            "description": "Blocks remaining to be completed"
+        },
+        "remaining_meters": {
+            "type": "number",
+            "description": "Remaining length in meters"
+        },
+        "crew_size": {
+            "type": "number",
+            "description": "Number of crew members present"
+        },
+        "weather": {
+            "type": "string",
+            "description": "Weather conditions (e.g., 'clear', 'rain')"
+        },
+        "notes": {
+            "type": "string",
+            "description": "Field notes"
+        },
+        "latitude": {
+            "type": "string",
+            "description": "GPS Latitude"
+        },
+        "longitude": {
+            "type": "string",
+            "description": "GPS Longitude"
+        },
+        "photo_base64": {
+            "type": "string",
+            "description": "Base64 encoded photo"
+        }
+    },
+    "required": [
+        "date",
+        "segment_id",
+        "shift_output_blocks",
+        "cumulative_blocks",
+        "remaining_blocks",
+        "crew_size",
+        "weather"
+    ]
+}

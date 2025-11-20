@@ -1,0 +1,26 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Block",
+    "description": "Describes one block unit and totals for the segment",
+    "type": "object",
+    "properties": {
+        "segment_id": {
+            "type": "string",
+            "description": "ID of the segment this block calculation belongs to"
+        },
+        "block_length_m": {
+            "type": "number",
+            "description": "Length of a single block in meters",
+            "default": 4.5
+        },
+        "blocks_total": {
+            "type": "number",
+            "description": "Total number of blocks in the segment"
+        }
+    },
+    "required": [
+        "segment_id",
+        "block_length_m",
+        "blocks_total"
+    ]
+}

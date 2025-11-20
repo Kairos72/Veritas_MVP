@@ -1,0 +1,60 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Project",
+    "description": "Describes a construction project",
+    "type": "object",
+    "properties": {
+        "project_id": {
+            "type": "string",
+            "description": "Unique identifier for the project"
+        },
+        "contract_id": {
+            "type": "string",
+            "description": "Client contract reference ID"
+        },
+        "project_title": {
+            "type": "string",
+            "description": "Title of the project"
+        },
+        "contractor_name": {
+            "type": "string",
+            "description": "Name of the company doing the work"
+        },
+        "owner": {
+            "type": "string",
+            "description": "The client or implementing office (e.g., DPWH Region)"
+        },
+        "project_type": {
+            "type": "string",
+            "description": "Type of project (e.g., PCCP Road)"
+        },
+        "start_date": {
+            "type": "string",
+            "format": "date",
+            "description": "Start date of the project (YYYY-MM-DD)"
+        },
+        "end_date": {
+            "type": "string",
+            "format": "date",
+            "description": "End date of the project (optional)"
+        },
+        "location": {
+            "type": "string",
+            "description": "Short text location (village/municipality)"
+        },
+        "notes": {
+            "type": "string",
+            "description": "Optional free text notes"
+        }
+    },
+    "required": [
+        "project_id",
+        "contract_id",
+        "project_title",
+        "contractor_name",
+        "owner",
+        "project_type",
+        "start_date",
+        "location"
+    ]
+}

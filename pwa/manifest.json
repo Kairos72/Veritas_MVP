@@ -1,0 +1,20 @@
+{
+    "name": "Veritas MVP",
+    "short_name": "Veritas",
+    "start_url": "./index.html",
+    "display": "standalone",
+    "background_color": "#f3f4f6",
+    "theme_color": "#2563eb",
+    "icons": [
+        {
+            "src": "https://via.placeholder.com/192x192.png?text=Veritas",
+            "sizes": "192x192",
+            "type": "image/png"
+        },
+        {
+            "src": "https://via.placeholder.com/512x512.png?text=Veritas",
+            "sizes": "512x512",
+            "type": "image/png"
+        }
+    ]
+}
