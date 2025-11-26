@@ -1,6 +1,12 @@
-# Generator Module
+# Monte Carlo Simulation Generator
 
-This module handles the simulation of construction progress and generation of shift logs.
+## Overview
+
+This module handles the simulation of construction progress and generation of shift logs. The simulation is retained for **internal testing, QA, and demonstration purposes** only.
+
+## Status
+
+**RETIRED FROM PRODUCTION UI** - Simulation Mode has been removed from the main PWA interface to simplify the user experience for field workers. The engine remains available for internal use.
 
 ## Usage
 

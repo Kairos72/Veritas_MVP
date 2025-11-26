@@ -23,6 +23,11 @@ def serve_output(filename):
 
 @app.route('/simulate', methods=['POST'])
 def run_simulation():
+    """
+    Monte Carlo simulation endpoint.
+    INTERNAL USE: For QA, testing, and internal demos.
+    Can be used with curl for direct testing by engineers.
+    """
     try:
         data = request.get_json()
         segments = data.get('segments', [])
@@ -46,6 +51,10 @@ def run_simulation():
 
 @app.route('/provenance', methods=['POST'])
 def generate_provenance():
+    """
+    Provenance PDF generation endpoint.
+    Used by both field logs and simulation data for creating "Statement of Work Accomplished" documents.
+    """
     try:
         data = request.get_json()
         shift_logs = data.get('shift_logs', [])

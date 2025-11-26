@@ -150,13 +150,15 @@
 
         <!-- Mode Selection Tabs -->
         <div class="tabs">
-            <button class="tab-btn active" onclick="switchTab('simulation')">Simulation Mode</button>
-            <button class="tab-btn" onclick="switchTab('segments')">Segments</button>
+            <button id="simulationTab" class="tab-btn" style="display: none;" onclick="switchTab('simulation')">Simulation Mode</button>
+            <button class="tab-btn active" onclick="switchTab('segments')">Segments</button>
             <button class="tab-btn" onclick="switchTab('fieldEntry')">Field Entry Mode</button>
+            <button class="tab-btn" onclick="switchTab('photoGallery')">Photo Gallery</button>
         </div>
 
-        <!-- Simulation Mode -->
-        <div id="simulation" class="tab-content">
+        <!-- Simulation Mode (Developer Only) -->
+        <div id="simulationContainer" style="display: none;">
+            <div id="simulation" class="tab-content">
             <section class="card">
                 <h2>1. Run Simulation</h2>
                 <form id="simForm">
@@ -205,6 +207,7 @@
                     </table>
                 </div>
             </section>
+        </div>
         </div>
 
         <!-- Segments Management -->
@@ -451,6 +454,97 @@
                 </div>
             </section>
         </div>
+
+        <!-- Photo Gallery Mode -->
+        <div id="photoGallery" class="tab-content" style="display: none;">
+            <section class="card">
+                <div class="section-header">
+                    <h2>Photo Gallery</h2>
+                    <button id="refreshGalleryBtn" class="btn secondary small">🔄 Refresh</button>
+                </div>
+
+                <!-- Filters Section -->
+                <div class="gallery-filters">
+                    <div class="filter-row">
+                        <div class="filter-group">
+                            <label for="filterSegment">Segment</label>
+                            <select id="filterSegment">
+                                <option value="all">All Segments</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label for="filterWorkType">Work Type</label>
+                            <select id="filterWorkType">
+                                <option value="all">All Types</option>
+                                <option value="PCCP">PCCP</option>
+                                <option value="Excavation">Excavation</option>
+                                <option value="Backfilling">Backfilling</option>
+                                <option value="Compaction">Compaction</option>
+                                <option value="Reinforcement">Reinforcement</option>
+                                <option value="Formworks">Formworks</option>
+                                <option value="Curing">Curing</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label for="filterDateFrom">From Date</label>
+                            <input type="date" id="filterDateFrom">
+                        </div>
+                        <div class="filter-group">
+                            <label for="filterDateTo">To Date</label>
+                            <input type="date" id="filterDateTo">
+                        </div>
+                    </div>
+                    <div class="filter-row">
+                        <div class="filter-group" style="flex: 1;">
+                            <label for="filterSearch">Search</label>
+                            <input type="text" id="filterSearch" placeholder="Search by notes, segment...">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Photo Count -->
+                <div id="photoCount" style="margin: 10px 0; color: #666; font-size: 0.9rem;">
+                    Loading photos...
+                </div>
+
+                <!-- Photo Grid -->
+                <div id="photoGrid" class="photo-grid">
+                    <!-- Photos will be loaded here -->
+                </div>
+
+                <!-- No Photos Message -->
+                <div id="noPhotosMessage" style="display: none; text-align: center; padding: 60px 20px; color: #666;">
+                    <h3>No Photos Found</h3>
+                    <p>No field photos match your current filters.</p>
+                    <p>Try adjusting your filters or take some photos in Field Entry mode.</p>
+                </div>
+            </section>
+        </div>
+
+        <!-- Photo Detail Modal -->
+        <div id="photoModal" class="photo-modal" style="display: none;">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>Photo Details</h3>
+                    <button class="modal-close" onclick="closePhotoModal()">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="modal-image-container">
+                        <img id="modalImage" src="" alt="Field Photo">
+                    </div>
+                    <div class="modal-details">
+                        <div id="modalDetailsContainer" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; width: 100%; max-width: 500px; margin: 0 auto;">
+                            <!-- Details will be populated by JavaScript -->
+                        </div>
+                    </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button id="modalPdfBtn" class="btn primary" style="display: none;">Open PDF for This Day</button>
+                    <button class="btn secondary" onclick="closePhotoModal()">Close</button>
+                </div>
+            </div>
+        </div>
     </div>
     <script src="jspdf.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
@@ -540,6 +634,20 @@
                         });
                     }
                 });
+            });
+        }
+    </script>
+
+    <!-- Enable Simulation UI for Development -->
+    <script>
+        // Show simulation UI if enabled in config (for development/demos)
+        if (CONFIG.ENABLE_SIMULATION_UI) {
+            document.addEventListener('DOMContentLoaded', function() {
+                const simTab = document.getElementById('simulationTab');
+                const simContainer = document.getElementById('simulationContainer');
+
+                if (simTab) simTab.style.display = 'inline-block';
+                if (simContainer) simContainer.style.display = 'block';
             });
         }
     </script>

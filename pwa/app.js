@@ -886,27 +886,7 @@ document.getElementById('projectSelect').addEventListener('change', (e) => {
 });
 
 // --- Tabs ---
-
-window.switchTab = function (tabName) {
-    // Hide all contents
-    document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
-    // Show selected
-    document.getElementById(tabName).style.display = 'block';
-
-    // Update buttons
-    document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
-    // This is a simple way to toggle active class based on onclick handler text, 
-    // but better to use event delegation or IDs. For now, we'll just toggle based on order or assume.
-    // Actually, let's just find the button that calls this function.
-    // Simpler:
-    if (tabName === 'simulation') {
-        document.querySelector('.tabs button:nth-child(1)').classList.add('active');
-        document.querySelector('.tabs button:nth-child(2)').classList.remove('active');
-    } else {
-        document.querySelector('.tabs button:nth-child(1)').classList.remove('active');
-        document.querySelector('.tabs button:nth-child(2)').classList.add('active');
-    }
-};
+// switchTab function is defined later in the file
 
 // --- Field Entry Mode ---
 
@@ -1529,14 +1509,536 @@ window.switchTab = function(tabName) {
         btn.classList.remove('active');
     });
 
-    // Show selected tab
-    document.getElementById(tabName).style.display = 'block';
+    // Show selected tab if it exists
+    const tabElement = document.getElementById(tabName);
+    if (tabElement) {
+        tabElement.style.display = 'block';
+    }
 
-    // Add active class to clicked button
-    event.target.classList.add('active');
+    // Add active class to clicked button if event exists
+    if (event && event.target) {
+        event.target.classList.add('active');
+    }
 
-    // Render segments table when switching to segments tab
+    // Tab-specific initialization
     if (tabName === 'segments') {
         renderSegmentsTable();
+    } else if (tabName === 'photoGallery') {
+        loadPhotoGallery();
+    }
+    // Note: simulation tab initialization removed from production UI
+}
+
+// ===============================
+// PHOTO GALLERY FUNCTIONALITY
+// ===============================
+
+let galleryPhotos = [];
+let filteredPhotos = [];
+let thumbnailCache = {};
+
+// Load photo gallery
+window.loadPhotoGallery = function() {
+    console.log('Loading photo gallery...');
+
+    // Load photos from field logs
+    galleryPhotos = [];
+    fieldLogs.forEach(log => {
+        if (log.photo_base64 && log.photo_base64.trim() !== '') {
+            galleryPhotos.push({
+                ...log,
+                thumbnail: null
+            });
+        }
+    });
+
+    // Sort by date (newest first)
+    galleryPhotos.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    // Populate segment filter
+    populateSegmentFilter();
+
+    // Apply initial filters
+    applyFilters();
+
+    // Add event listeners
+    setupGalleryEventListeners();
+};
+
+// Setup gallery event listeners
+function setupGalleryEventListeners() {
+    // Filter change listeners
+    ['filterSegment', 'filterWorkType', 'filterDateFrom', 'filterDateTo', 'filterSearch'].forEach(id => {
+        const element = document.getElementById(id);
+        if (element) {
+            element.addEventListener('change', applyFilters);
+            if (id === 'filterSearch') {
+                element.addEventListener('input', applyFilters);
+            }
+        }
+    });
+
+    // Refresh button
+    const refreshBtn = document.getElementById('refreshGalleryBtn');
+    if (refreshBtn) {
+        refreshBtn.addEventListener('click', () => {
+            loadPhotoGallery();
+        });
+    }
+
+    // Modal backdrop click to close
+    const modal = document.getElementById('photoModal');
+    if (modal) {
+        modal.addEventListener('click', (e) => {
+            // Only close if clicking the backdrop (not the modal content)
+            if (e.target === modal) {
+                closePhotoModal();
+            }
+        });
+
+        // ESC key to close modal
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && modal.style.display === 'flex') {
+                closePhotoModal();
+            }
+        });
+    }
+}
+
+// Populate segment filter dropdown
+function populateSegmentFilter() {
+    const segmentFilter = document.getElementById('filterSegment');
+    if (!segmentFilter) return;
+
+    // Get unique segments
+    const uniqueSegments = [...new Set(galleryPhotos.map(photo => photo.segment_id))].sort();
+
+    // Clear existing options (except "All Segments")
+    segmentFilter.innerHTML = '<option value="all">All Segments</option>';
+
+    // Add segment options
+    uniqueSegments.forEach(segmentId => {
+        const option = document.createElement('option');
+        option.value = segmentId;
+        option.textContent = segmentId;
+        segmentFilter.appendChild(option);
+    });
+}
+
+// Apply filters to photos
+function applyFilters() {
+    const segmentFilter = document.getElementById('filterSegment')?.value || 'all';
+    const workTypeFilter = document.getElementById('filterWorkType')?.value || 'all';
+    const dateFromFilter = document.getElementById('filterDateFrom')?.value;
+    const dateToFilter = document.getElementById('filterDateTo')?.value;
+    const searchFilter = document.getElementById('filterSearch')?.value.toLowerCase();
+
+    // Filter photos
+    filteredPhotos = galleryPhotos.filter(photo => {
+        // Segment filter
+        if (segmentFilter !== 'all' && photo.segment_id !== segmentFilter) {
+            return false;
+        }
+
+        // Work type filter (from notes or segment type)
+        if (workTypeFilter !== 'all') {
+            const photoWorkType = getWorkTypeFromPhoto(photo);
+            if (photoWorkType !== workTypeFilter) {
+                return false;
+            }
+        }
+
+        // Date filters
+        if (dateFromFilter && photo.date < dateFromFilter) {
+            return false;
+        }
+        if (dateToFilter && photo.date > dateToFilter) {
+            return false;
+        }
+
+        // Search filter
+        if (searchFilter) {
+            const searchText = `${photo.segment_id} ${photo.notes || ''} ${photo.date}`.toLowerCase();
+            if (!searchText.includes(searchFilter)) {
+                return false;
+            }
+        }
+
+        return true;
+    });
+
+    // Update photo count
+    updatePhotoCount();
+
+    // Render gallery
+    renderPhotoGrid();
+}
+
+// Get work type from photo (simplified logic)
+function getWorkTypeFromPhoto(photo) {
+    // Try to extract work type from notes or segment
+    const notes = (photo.notes || '').toLowerCase();
+    const segmentId = (photo.segment_id || '').toLowerCase();
+
+    // Check notes for work type keywords
+    if (notes.includes('pccp') || notes.includes('concrete')) return 'PCCP';
+    if (notes.includes('excavat')) return 'Excavation';
+    if (notes.includes('backfill')) return 'Backfilling';
+    if (notes.includes('compaction') || notes.includes('compact')) return 'Compaction';
+    if (notes.includes('reinforce') || notes.includes('rebar')) return 'Reinforcement';
+    if (notes.includes('formwork')) return 'Formworks';
+    if (notes.includes('cure')) return 'Curing';
+
+    // Default to PCCP for construction projects
+    return 'PCCP';
+}
+
+// Update photo count display
+function updatePhotoCount() {
+    const countElement = document.getElementById('photoCount');
+    const noPhotosElement = document.getElementById('noPhotosMessage');
+    const gridElement = document.getElementById('photoGrid');
+
+    if (filteredPhotos.length === 0) {
+        countElement.textContent = 'No photos found';
+        noPhotosElement.style.display = 'block';
+        gridElement.style.display = 'none';
+    } else {
+        countElement.textContent = `Showing ${filteredPhotos.length} photo${filteredPhotos.length !== 1 ? 's' : ''}`;
+        noPhotosElement.style.display = 'none';
+        gridElement.style.display = 'grid';
+    }
+}
+
+// Render photo grid
+async function renderPhotoGrid() {
+    const gridElement = document.getElementById('photoGrid');
+    if (!gridElement || filteredPhotos.length === 0) return;
+
+    // Clear existing grid
+    gridElement.innerHTML = '';
+
+    // Create photo thumbnails
+    for (const photo of filteredPhotos) {
+        const thumbnail = await createThumbnail(photo);
+        gridElement.appendChild(thumbnail);
+    }
+}
+
+// Create photo thumbnail element
+async function createThumbnail(photo) {
+    const thumbnail = document.createElement('div');
+    thumbnail.className = 'photo-thumbnail';
+    thumbnail.onclick = () => openPhotoModal(photo);
+
+    // Get or generate thumbnail
+    let thumbnailSrc = thumbnailCache[photo.entry_id];
+    if (!thumbnailSrc) {
+        thumbnailSrc = await generateThumbnail(photo.photo_base64);
+        thumbnailCache[photo.entry_id] = thumbnailSrc;
+    }
+
+    // Get work type
+    const workType = getWorkTypeFromPhoto(photo);
+
+    thumbnail.innerHTML = `
+        <img src="${thumbnailSrc}" alt="Field photo" class="thumbnail-image">
+        <div class="thumbnail-info">
+            <div class="thumbnail-date">${formatDate(photo.date)}</div>
+            <div class="thumbnail-segment">
+                <span>📍 ${photo.segment_id}</span>
+            </div>
+            <div class="thumbnail-work-type">${workType}</div>
+        </div>
+    `;
+
+    return thumbnail;
+}
+
+// Generate thumbnail from base64 image (optimized for large photos)
+function generateThumbnail(base64Image) {
+    return new Promise((resolve) => {
+        const img = new Image();
+
+        // Add error handling and loading timeout
+        const timeout = setTimeout(() => {
+            resolve('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjZGRkIi8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIxNCIgZmlsbD0id2hpdGUiPkVycm9yPC90ZXh0PjwvcmVjdD48L3N2Zz4=');
+        }, 5000);
+
+        img.onload = () => {
+            clearTimeout(timeout);
+
+            try {
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+
+                // Set thumbnail size (200px max, maintain aspect ratio)
+                const maxSize = 200;
+                let width = img.width;
+                let height = img.height;
+
+                // Prevent division by zero
+                if (width === 0 || height === 0) {
+                    resolve('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjZGRkIi8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIxNCIgZmlsbD0id2hpdGUiPkltYWdlIEVycm9yPC90ZXh0PjwvcmVjdD48L3N2Zz4=');
+                    return;
+                }
+
+                // Calculate aspect ratio
+                if (width > height) {
+                    if (width > maxSize) {
+                        height = (height * maxSize) / width;
+                        width = maxSize;
+                    }
+                } else {
+                    if (height > maxSize) {
+                        width = (width * maxSize) / height;
+                        height = maxSize;
+                    }
+                }
+
+                // Limit canvas size to prevent memory issues
+                const maxCanvasSize = 400;
+                if (width > maxCanvasSize) {
+                    height = (height * maxCanvasSize) / width;
+                    width = maxCanvasSize;
+                }
+                if (height > maxCanvasSize) {
+                    width = (width * maxCanvasSize) / height;
+                    height = maxCanvasSize;
+                }
+
+                canvas.width = width;
+                canvas.height = height;
+
+                // Enable image smoothing for better quality
+                ctx.imageSmoothingEnabled = true;
+                ctx.imageSmoothingQuality = 'high';
+
+                // Draw compressed image
+                ctx.drawImage(img, 0, 0, width, height);
+
+                // High compression to reduce file size
+                const thumbnail = canvas.toDataURL('image/jpeg', 0.5);
+                resolve(thumbnail);
+
+            } catch (error) {
+                console.error('Error generating thumbnail:', error);
+                resolve('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjZGRkIi8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIxNCIgZmlsbD0id2hpdGUiPlRodW1ibmFpbCBFcnJvcjwvdGV4dD48L3JlY3Q+PC9zdmc+');
+            }
+        };
+
+        img.onerror = () => {
+            clearTimeout(timeout);
+            console.error('Error loading image for thumbnail generation');
+            resolve('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjZGRkIi8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIxNCIgZmlsbD0id2hpdGUiPkxvYWRpbmcgRXJyb3I8L3RleHQ+PC9yZWN0Pjwvc3ZnPg==');
+        };
+
+        // Start with a reasonable timeout for loading
+        setTimeout(() => {
+            img.src = base64Image;
+        }, 100);
+    });
+}
+
+// Generate medium-sized image (2.5x larger than thumbnail) for modal viewing
+function generateMediumImage(base64Image) {
+    return new Promise((resolve) => {
+        const img = new Image();
+
+        // Add timeout for loading
+        const timeout = setTimeout(() => {
+            console.warn('Medium image generation timeout, falling back to thumbnail');
+            const thumbnail = thumbnailCache[Object.keys(thumbnailCache)[0]] || 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjZGRkIi8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIxNCIgZmlsbD0id2hpdGUiPkltZGl1bSBdXJuPC90ZXh0PjwvcmVjdD48L3N2Zz4=';
+            resolve(thumbnail);
+        }, 3000);
+
+        img.onload = () => {
+            clearTimeout(timeout);
+
+            try {
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+
+                // Generate thumbnail first to get dimensions
+                const thumbnailSize = 200;
+                let thumbWidth, thumbHeight;
+
+                // Get thumbnail dimensions first
+                const tempCanvas = document.createElement('canvas');
+                const tempCtx = tempCanvas.getContext('2d');
+                let thumbW = img.width;
+                let thumbH = img.height;
+
+                if (thumbW > thumbH) {
+                    if (thumbW > thumbnailSize) {
+                        thumbH = (thumbH * thumbnailSize) / thumbW;
+                        thumbW = thumbnailSize;
+                    }
+                } else {
+                    if (thumbH > thumbnailSize) {
+                        thumbW = (thumbW * thumbnailSize) / thumbH;
+                        thumbH = thumbnailSize;
+                    }
+                }
+
+                // Calculate medium size (2.5x larger than thumbnail)
+                const mediumSize = Math.round(thumbnailSize * 2.5);
+                const mediumWidth = Math.round(thumbW * 2.5);
+                const mediumHeight = Math.round(thumbH * 2.5);
+
+                // Limit medium image size to prevent memory issues
+                const maxMediumSize = 600;
+                let finalWidth = mediumWidth;
+                let finalHeight = mediumHeight;
+
+                if (mediumWidth > maxMediumSize) {
+                    const aspectRatio = mediumHeight / mediumWidth;
+                    finalWidth = maxMediumSize;
+                    finalHeight = Math.round(maxMediumSize * aspectRatio);
+                }
+                if (finalHeight > maxMediumSize) {
+                    const aspectRatio = mediumWidth / mediumHeight;
+                    finalHeight = maxMediumSize;
+                    finalWidth = Math.round(maxMediumSize * aspectRatio);
+                }
+
+                canvas.width = finalWidth;
+                canvas.height = finalHeight;
+
+                // Enable image smoothing for better quality
+                ctx.imageSmoothingEnabled = true;
+                ctx.imageSmoothingQuality = 'high';
+
+                // Draw medium-sized image
+                ctx.drawImage(img, 0, 0, finalWidth, finalHeight);
+
+                // Moderate compression for balance of quality and size
+                const mediumImage = canvas.toDataURL('image/jpeg', 0.75);
+                resolve(mediumImage);
+
+            } catch (error) {
+                console.error('Error generating medium image:', error);
+                // Fallback to thumbnail
+                const thumbnail = thumbnailCache[Object.keys(thumbnailCache)[0]] || 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjZGRkIi8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIxNCIgZmlsbD0id2hpdGUiPkltZGl1bSBkXJuPC90ZXh0PjwvcmVjdD48L3N2Zz4=';
+                resolve(thumbnail);
+            }
+        };
+
+        img.onerror = () => {
+            clearTimeout(timeout);
+            console.error('Error loading image for medium image generation');
+            // Fallback to thumbnail
+            const thumbnail = thumbnailCache[Object.keys(thumbnailCache)[0]] || 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjZGRkIi8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIxNCIgZmlsbD0id2hpdGUiPk1ldW1kaW1lZCBFYXJyb3I8L3RleHQ+PC9yZWN0PjwvcmVjdD48L3N2Zz4=';
+            resolve(thumbnail);
+        };
+
+        setTimeout(() => {
+            img.src = base64Image;
+        }, 100);
+    });
+}
+
+// Open photo modal with full details
+window.openPhotoModal = function(photo) {
+    const modal = document.getElementById('photoModal');
+
+    // Use the original full-size photo in modal (but enhanced)
+    const modalImage = document.getElementById('modalImage');
+
+    // Check if we have the original photo available
+    if (photo.photo_base64 && photo.photo_base64 !== '') {
+        // Generate medium-sized image from original (2.5x larger than thumbnail)
+        generateMediumImage(photo.photo_base64).then(mediumImage => {
+            modalImage.src = mediumImage;
+        }).catch(error => {
+            console.error('Error generating medium image:', error);
+            // Fallback to cached thumbnail
+            const cachedThumbnail = thumbnailCache[photo.entry_id];
+            modalImage.src = cachedThumbnail || 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjZGRkIi8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIxNCIgZmlsbD0id2hpdGUiPk5vIFBob3RvPC90ZXh0PjwvcmVjdD48L3N2Zz4=';
+        });
+    } else {
+        // Fallback to thumbnail if original not available
+        const cachedThumbnail = thumbnailCache[photo.entry_id];
+        modalImage.src = cachedThumbnail || 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjZGRkIi8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIxNCIgZmlsbD0id2hpdGUiPk5vIFBob3RvPC90ZXh0PjwvcmVjdD48L3N2Zz4=';
+    }
+
+    // Create horizontal details layout below photo
+    const detailsContainer = document.getElementById('modalDetailsContainer');
+    const detailsHtml = `
+        <div style="text-align: center;">
+            <strong style="color: #555; font-size: 14px;">📅 Date</strong><br>
+            <span style="font-size: 16px;">${formatDate(photo.date)}</span>
+        </div>
+        <div style="text-align: center;">
+            <strong style="color: #555; font-size: 14px;">📍 Segment</strong><br>
+            <span style="font-size: 16px;">${photo.segment_id || 'N/A'}</span>
+        </div>
+        <div style="text-align: center;">
+            <strong style="color: #555; font-size: 14px;">🔧 Work Type</strong><br>
+            <span style="font-size: 16px;">${getWorkTypeFromPhoto(photo)}</span>
+        </div>
+        <div style="text-align: center;">
+            <strong style="color: #555; font-size: 14px;">👥 Crew</strong><br>
+            <span style="font-size: 16px;">${photo.crew_size || 'N/A'}</span>
+        </div>
+        <div style="text-align: center;">
+            <strong style="color: #555; font-size: 14px;">☁️ Weather</strong><br>
+            <span style="font-size: 16px;">${photo.weather || 'N/A'}</span>
+        </div>
+        <div style="text-align: center;">
+            <strong style="color: #555; font-size: 14px;">📊 Progress</strong><br>
+            <span style="font-size: 16px;">${photo.shift_output_blocks || 0} blocks</span>
+        </div>
+        ${photo.latitude && photo.longitude ? `
+        <div style="text-align: center; grid-column: 1 / -1;">
+            <strong style="color: #555; font-size: 14px;">🌍 GPS</strong><br>
+            <span style="font-size: 16px;">${photo.latitude}, ${photo.longitude}</span>
+        </div>
+        ` : ''}
+        ${photo.notes ? `
+        <div style="text-align: center; grid-column: 1 / -1;">
+            <strong style="color: #555; font-size: 14px;">📝 Notes</strong><br>
+            <span style="font-size: 16px; word-wrap: break-word; max-width: 100%;">${photo.notes}</span>
+        </div>
+        ` : ''}
+    `;
+
+    detailsContainer.innerHTML = detailsHtml;
+
+    // Show modal
+    modal.style.display = 'flex';
+
+    // Store current scroll position
+    modal.dataset.scrollTop = window.pageYOffset;
+
+    // Don't prevent body scroll - allow page to remain scrollable
+};
+
+// Close photo modal
+window.closePhotoModal = function() {
+    const modal = document.getElementById('photoModal');
+
+    modal.style.display = 'none';
+
+    // Restore scroll position if needed
+    if (modal.dataset.scrollTop) {
+        window.scrollTo(0, parseInt(modal.dataset.scrollTop));
+        delete modal.dataset.scrollTop;
+    }
+};
+
+// Format date for display
+function formatDate(dateString) {
+    if (!dateString) return 'N/A';
+
+    try {
+        const date = new Date(dateString);
+        return date.toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric'
+        });
+    } catch (e) {
+        return dateString;
     }
 }

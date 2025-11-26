@@ -41,12 +41,12 @@ The system uses JSON schemas defined in `/engine/schema/`:
 - `/engine/provenance/provenance.py`: PDF generation using fpdf to create "Statement of Work Accomplished" documents with SHA-256 hashing
 
 ### PWA Frontend Structure
-- `app.js`: Main application logic, project management, and LocalStorage persistence
+- `app.js`: Main application logic, project management, and LocalStorage persistence (2000+ lines)
 - `auth.js`: Supabase authentication handling
 - `sync_client.js`: Bidirectional sync between LocalStorage and Supabase using last-writer-wins conflict resolution
 - `sw.js`: Service worker for offline caching
-- `pdf_local.js`: Local PDF generation capabilities
-- `config.js`: Supabase configuration (requires real credentials for production)
+- `pdf_local.js`: Local PDF generation capabilities with GPS overlays and QR codes
+- `config.js`: Supabase configuration and developer settings (includes `ENABLE_SIMULATION_UI` flag)
 
 ### Data Flow
 1. **Simulation**: Frontend sends segments to API `/simulate` → returns shift logs with daily progress
@@ -60,14 +60,24 @@ The system uses JSON schemas defined in `/engine/schema/`:
 - **Bidirectional Sync**: Projects and field logs sync with Supabase when authenticated
 - **Data Export/Import**: JSON export functionality for data portability
 - **PDF Generation**: Both server-side (provenance) and client-side PDF creation
+- **Photo Gallery**: Field photo management with filtering, thumbnails, and modal viewing (200+ photos)
+- **GPS Integration**: Photo overlays with coordinates, QR codes, and location verification
+- **Production UI**: Clean, field-focused interface (Simulation UI hidden by default)
 
 ### Authentication & Sync
 Uses Supabase for authentication and data sync. Configuration in `config.js` requires valid Supabase credentials. Sync implements last-writer-wins conflict resolution based on timestamps.
 
 ### API Endpoints
-- `POST /simulate`: Generate construction progress simulation from segments
+- `POST /simulate`: Generate construction progress simulation from segments (INTERNAL/DEMO USE)
 - `POST /provenance`: Create provenance PDF from shift logs
 - `GET /output/<filename>`: Serve generated PDF files
+
+### Current State (Post-Development)
+- **Production Ready**: Clean UI with Segments, Field Entry, and Photo Gallery tabs
+- **Simulation Engine**: Retained for internal testing, QA, and demos (toggle via `CONFIG.ENABLE_SIMULATION_UI`)
+- **Photo Enhancement**: GPS overlays, QR codes, and medium-sized image optimization
+- **Mobile Optimized**: Responsive design with touch-friendly controls and horizontal photo detail layouts
+- **Field Provenance**: Cryptographic PDF generation with SHA-256 verification
 
 ## Development Notes
 
@@ -76,3 +86,6 @@ Uses Supabase for authentication and data sync. Configuration in `config.js` req
 - The system uses a block-based construction model (4.5m blocks per segment)
 - Simulation includes weather factors and crew productivity modeling
 - PDF provenance documents include project metadata and cryptographic hashes
+- Photo Gallery handles large datasets (200+ photos) with client-side caching and performance optimization
+- Field UI optimized for daily workflow with minimal clicks and mobile-first design
+- Developer toggle in `config.js` controls Simulation Mode visibility (default: hidden)
