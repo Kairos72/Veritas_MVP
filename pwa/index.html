@@ -6,7 +6,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Veritas MVP Demo</title>
     <link rel="stylesheet" href="style.css">
-    <link rel="manifest" href="manifest.json">
+    <link rel="manifest" href="manifest.json?v=202511245">
+    <link rel="icon" href="./favicon.ico" type="image/x-icon">
     <!-- Supabase JS -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
@@ -35,17 +36,19 @@
         <section class="card" id="projectSection">
             <div class="section-header">
                 <h2>Project Selection</h2>
-                <div style="display: flex; gap: 10px; align-items: center;">
+                <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
                     <!-- Sync Controls -->
                     <div id="syncControls" style="display: none; margin-right: 10px;">
                         <span id="lastSyncTime" style="font-size: 0.8em; color: #666; margin-right: 5px;"></span>
                         <button id="syncBtn" class="btn small primary">Sync Now</button>
                     </div>
 
-                    <button id="exportBtn" class="btn secondary small">Export Data (JSON)</button>
+                    <button id="exportBtn" class="btn secondary small">Export Data</button>
                     <button id="importBtn" class="btn secondary small">Import Data</button>
                     <input type="file" id="importFile" accept=".json" style="display: none;">
                     <button id="newProjectBtn" class="btn secondary small">New Project</button>
+                    <button id="storageBtn" class="btn small" style="background-color: #f59e0b;">Storage Info</button>
+                    <button id="clearAllBtn" class="btn small" style="background-color: #dc2626;">Clear All Data</button>
                 </div>
             </div>
 
@@ -77,13 +80,11 @@
                         <input type="password" id="loginPassword" placeholder="********">
                     </div>
                     <div style="display: flex; gap: 10px; margin-top: 15px;">
-                        <button id="doLoginBtn" class="btn primary" style="flex: 1;">Login</button>
+                        <button id="doLoginBtn" class="btn primary" style="flex: 1;">Sign In</button>
+                        <button id="doRegisterBtn" class="btn secondary" style="flex: 1;">Sign Up</button>
                         <button id="cancelLoginBtn" class="btn secondary" style="flex: 1;">Cancel</button>
                     </div>
                     <div id="loginError" style="color: red; font-size: 0.8em; margin-top: 10px;"></div>
-                    <div style="margin-top: 15px; font-size: 0.8em; color: #666; text-align: center;">
-                        No account? Just enter email/pass and click Login to Sign Up (if enabled) or ask admin.
-                    </div>
                 </div>
             </div>
 
@@ -326,6 +327,7 @@
                                 <th>Location</th>
                                 <th>Photo</th>
                                 <th>Notes</th>
+                                <th>Actions</th>
                             </tr>
                         </thead>
                         <tbody></tbody>
@@ -382,15 +384,86 @@
     <script src="sync_client.js"></script>
     <script src="app.js"></script>
     <script>
+        // Force unregister old service workers first AND clear all caches
         if ('serviceWorker' in navigator) {
-            window.addEventListener('load', () => {
-                navigator.serviceWorker.register('./sw.js')
+            // Clear all caches first
+            if ('caches' in window) {
+                caches.keys().then(function(cacheNames) {
+                    Promise.all(
+                        cacheNames.map(function(cacheName) {
+                            console.log('Deleting cache:', cacheName);
+                            return caches.delete(cacheName);
+                        })
+                    ).then(function() {
+                        console.log('All caches cleared');
+                        // Now unregister service workers
+                        unregisterAndRegisterSW();
+                    });
+                });
+            } else {
+                unregisterAndRegisterSW();
+            }
+        } else {
+            console.log('Service Worker not available - Running in compatible mode');
+        }
+
+        function unregisterAndRegisterSW() {
+            navigator.serviceWorker.getRegistrations().then(function(registrations) {
+                const unregisterPromises = registrations.map(function(registration) {
+                    console.log('Unregistering old Service Worker:', registration.scope);
+                    return registration.unregister();
+                });
+
+                Promise.all(unregisterPromises).then(function() {
+                    console.log('All service workers unregistered');
+                    // Now register the new one
+                    registerNewServiceWorker();
+                });
+            });
+        }
+
+        function registerNewServiceWorker() {
+            // Only register Service Worker if:
+            // 1. Browser supports it
+            // 2. NOT opened from file:// protocol
+            // 3. NOT in private/incognito mode
+            if (location.protocol !== 'file:' && !isPrivateMode()) {
+                navigator.serviceWorker.register('./sw.js', { scope: './' })
                     .then(registration => {
                         console.log('ServiceWorker registration successful with scope: ', registration.scope);
+
+                        // Force the new service worker to become active
+                        if (registration.waiting) {
+                            registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+                        }
                     })
                     .catch(err => {
-                        console.log('ServiceWorker registration failed: ', err);
+                        console.warn('ServiceWorker registration failed (offline mode will still work): ', err);
                     });
+            }
+        }
+
+        // Detect if we're in private/incognito mode
+        function isPrivateMode() {
+            try {
+                localStorage.setItem('test', 'test');
+                localStorage.removeItem('test');
+                return false;
+            } catch (e) {
+                return true;
+            }
+        }
+
+        // Also clear any storage issues from old manifest
+        if ('caches' in window) {
+            caches.keys().then(function(cacheNames) {
+                cacheNames.forEach(function(cacheName) {
+                    if (cacheName.includes('veritas-mvp')) {
+                        caches.delete(cacheName).then(function() {
+                            console.log('Deleted cache:', cacheName);
+                        });
+                    }
+                });
             });
         }
     </script>

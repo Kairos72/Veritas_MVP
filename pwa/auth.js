@@ -42,10 +42,12 @@ function updateAuthUI(user) {
         logoutBtn.style.display = 'inline-block';
         syncControls.style.display = 'flex';
 
-        // Trigger initial sync if needed
-        if (window.syncClient) {
-            window.syncClient.sync();
-        }
+        // Trigger initial sync if needed (with delay to ensure UI is ready)
+        setTimeout(() => {
+            if (window.syncClient && currentUser) {  // Double-check user is still logged in
+                window.syncClient.sync();
+            }
+        }, 100);
     } else {
         userInfo.textContent = "Not signed in";
         loginBtn.style.display = 'inline-block';
@@ -63,6 +65,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const loginBtn = document.getElementById('loginBtn');
     const cancelLoginBtn = document.getElementById('cancelLoginBtn');
     const doLoginBtn = document.getElementById('doLoginBtn');
+    const doRegisterBtn = document.getElementById('doRegisterBtn');
     const logoutBtn = document.getElementById('logoutBtn');
 
     loginBtn.addEventListener('click', () => {
@@ -97,31 +100,63 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        // Try sign in
+        // Try sign in first
         const { data, error } = await supabase.auth.signInWithPassword({
             email,
             password
         });
 
         if (error) {
-            // If sign in fails, try sign up (for MVP simplicity)
-            // In production, you'd separate these or handle errors better
-            console.log("Sign in failed, trying sign up...", error);
-            const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-                email,
-                password
-            });
-
-            if (signUpError) {
-                errorDiv.textContent = "Error: " + signUpError.message;
-            } else {
-                errorDiv.textContent = "Account created! Please check your email to confirm, or if auto-confirm is on, you are signed in.";
-                // If auto-confirm is on, the auth state change will close the modal
-                setTimeout(() => loginModal.style.display = 'none', 2000);
+            // Check if it's "Invalid login credentials" - don't try to sign up
+            if (error.message.includes("Invalid login credentials")) {
+                errorDiv.textContent = "Invalid email or password. Please try again or create a new account.";
+                return;
             }
+
+            // For other errors (like "User not confirmed"), show the specific error
+            errorDiv.textContent = "Login failed: " + error.message;
+            console.error("Login error:", error);
+            return;
+        }
+
+        // Success - close modal
+        loginModal.style.display = 'none';
+        // Auth state change listener will handle UI update
+    });
+
+    doRegisterBtn.addEventListener('click', async () => {
+        const email = document.getElementById('loginEmail').value;
+        const password = document.getElementById('loginPassword').value;
+        const errorDiv = document.getElementById('loginError');
+
+        if (!email || !password) {
+            errorDiv.textContent = "Please enter email and password";
+            return;
+        }
+
+        if (!supabase) {
+            errorDiv.textContent = "Supabase not initialized.";
+            return;
+        }
+
+        errorDiv.textContent = "Creating account...";
+
+        // Try sign up
+        const { data, error } = await supabase.auth.signUp({
+            email,
+            password
+        });
+
+        if (error) {
+            errorDiv.textContent = "Error creating account: " + error.message;
         } else {
-            loginModal.style.display = 'none';
-            // Auth state change listener will handle UI update
+            errorDiv.textContent = "Account created! Please check your email to confirm.";
+            // If auto-confirm is on, the auth state change will close the modal
+            setTimeout(() => {
+                if (!document.getElementById('loginError').textContent.includes("check your email")) {
+                    loginModal.style.display = 'none';
+                }
+            }, 2000);
         }
     });
 });

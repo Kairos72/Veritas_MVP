@@ -1,4 +1,4 @@
-const API_URL = 'http://localhost:5000';
+const API_URL = 'http://192.168.1.56:5000';
 
 let currentLogs = [];
 let projects = [];
@@ -7,10 +7,89 @@ let fieldLogs = [];
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
+    // Check if we're offline
+    const isOffline = !navigator.onLine;
+
+    if (isOffline) {
+        console.log('📶 Offline mode detected');
+        showOfflineIndicator();
+    }
+
     window.loadProjects();
     window.loadFieldLogs();
     updateProjectSelect();
+
+    // Improve overall mobile touch behavior
+    document.body.style.touchAction = 'pan-y'; // Allow vertical scrolling by default
+
+    // Fix touch scrolling for all table containers
+    const allTableContainers = document.querySelectorAll('.table-container');
+    allTableContainers.forEach(container => {
+        container.style.touchAction = 'pan-x'; // Allow horizontal scrolling in tables
+    });
+
+    // Listen for online/offline events
+    window.addEventListener('online', () => {
+        console.log('📶 Back online!');
+        hideOfflineIndicator();
+    });
+
+    window.addEventListener('offline', () => {
+        console.log('📶 Gone offline');
+        showOfflineIndicator();
+    });
 });
+
+function showOfflineIndicator() {
+    const indicator = document.createElement('div');
+    indicator.id = 'offlineIndicator';
+    indicator.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        background: #f59e0b;
+        color: white;
+        text-align: center;
+        padding: 8px;
+        font-size: 0.9rem;
+        z-index: 9999;
+        font-weight: bold;
+    `;
+    indicator.textContent = '📶 Offline Mode - Limited Functionality';
+
+    // Only add if not already present
+    if (!document.getElementById('offlineIndicator')) {
+        document.body.appendChild(indicator);
+    }
+}
+
+function hideOfflineIndicator() {
+    const indicator = document.getElementById('offlineIndicator');
+    if (indicator) {
+        indicator.remove();
+    }
+}
+
+// Enhanced API calls with offline handling
+async function makeAPICall(url, options = {}) {
+    try {
+        const response = await fetch(API_URL + url, options);
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        return await response.json();
+    } catch (error) {
+        if (!navigator.onLine) {
+            console.log('API call failed - offline mode');
+            // You could implement offline queueing here
+            throw new Error('Offline - Please connect to internet for this feature');
+        }
+        throw error;
+    }
+}
 
 // --- Persistence ---
 
@@ -19,23 +98,288 @@ window.loadFieldLogs = function () {
     const stored = localStorage.getItem('veritas_field_logs');
     if (stored) {
         fieldLogs = JSON.parse(stored);
+
+        // Fix duplicate entry_id issues
+        fieldLogs = fixDuplicateEntryIds(fieldLogs);
     }
     if (typeof renderFieldLogs === 'function') {
         renderFieldLogs();
     }
 }
 
-// Save field logs to LocalStorage
-function saveFieldLogs() {
-    localStorage.setItem('veritas_field_logs', JSON.stringify(fieldLogs));
-    if (typeof renderFieldLogs === 'function') {
-        renderFieldLogs();
+// Fix duplicate entry IDs by generating new ones for duplicates
+function fixDuplicateEntryIds(logs) {
+    const idCounts = {};
+    const fixedLogs = [];
+
+    logs.forEach(log => {
+        if (!log.entry_id) {
+            // Generate new ID for logs without one
+            log.entry_id = crypto.randomUUID();
+            fixedLogs.push(log);
+        } else if (idCounts[log.entry_id]) {
+            // Duplicate found - generate new unique ID
+            const newId = crypto.randomUUID();
+            console.log(`Fixed duplicate entry_id: ${log.entry_id} -> ${newId}`);
+            log.entry_id = newId;
+            fixedLogs.push(log);
+        } else {
+            // First occurrence - track it
+            idCounts[log.entry_id] = 1;
+            fixedLogs.push(log);
+        }
+    });
+
+    // Save the fixed logs back to storage
+    if (logs.length !== fixedLogs.length || Object.keys(idCounts).some(id => idCounts[id] > 1)) {
+        localStorage.setItem('veritas_field_logs', JSON.stringify(fixedLogs));
+        console.log('Fixed duplicate entry IDs in field logs');
     }
 
-    // Trigger Sync
-    if (window.syncClient && currentUser) {
-        window.syncClient.sync();
+    return fixedLogs;
+}
+
+// Save field logs to LocalStorage
+function saveFieldLogs() {
+    try {
+        const jsonString = JSON.stringify(fieldLogs);
+
+        // Check storage quota before saving
+        const storageUsed = JSON.stringify(localStorage).length;
+        const storageQuota = 5 * 1024 * 1024; // 5MB estimate
+
+        if (storageUsed > storageQuota * 0.8) { // 80% warning threshold
+            console.warn('LocalStorage approaching quota limit');
+
+            // Try to free up space by compressing old photos
+            cleanupOldPhotos();
+        }
+
+        localStorage.setItem('veritas_field_logs', jsonString);
+
+        if (typeof renderFieldLogs === 'function') {
+            renderFieldLogs();
+        }
+
+        // Trigger Sync
+        if (window.syncClient && currentUser) {
+            window.syncClient.sync();
+        }
+    } catch (error) {
+        if (error.name === 'QuotaExceededError') {
+            alert('Storage full! Please export and clear some data, or delete old photos.');
+            // Try to free up space immediately
+            emergencyCleanup();
+        } else {
+            console.error('Error saving field logs:', error);
+        }
     }
+}
+
+// --- Photo Compression ---
+
+function compressPhoto(base64String, maxWidth = 800, quality = 0.6) {
+    return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = function() {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+
+            // Calculate new dimensions
+            let { width, height } = img;
+            if (width > maxWidth) {
+                height = (maxWidth / width) * height;
+                width = maxWidth;
+            }
+
+            canvas.width = width;
+            canvas.height = height;
+
+            // Draw and compress
+            ctx.drawImage(img, 0, 0, width, height);
+
+            // Try to get smaller size
+            let compressed = canvas.toDataURL('image/jpeg', quality);
+
+            // If still too large, compress more
+            if (compressed.length > 500000) { // 500KB limit
+                compressed = canvas.toDataURL('image/jpeg', 0.3);
+            }
+            if (compressed.length > 300000) { // 300KB limit
+                compressed = canvas.toDataURL('image/jpeg', 0.2);
+            }
+
+            resolve(compressed);
+        };
+        img.src = base64String;
+    });
+}
+
+// --- Storage Management ---
+
+function cleanupOldPhotos() {
+    console.log('Cleaning up old photos to free storage space...');
+
+    // Be more aggressive - keep only the last 20 photos
+    const photoLogs = fieldLogs.filter(log => log.photo_base64);
+    const oldPhotoCount = photoLogs.length;
+
+    if (oldPhotoCount > 0) {
+        // Remove ALL photos if more than 20, or oldest if less
+        const photosToKeep = Math.min(20, Math.floor(oldPhotoCount * 0.3)); // Keep 30% max
+        photoLogs.sort((a, b) => new Date(a.date) - new Date(b.date));
+
+        // Remove everything except the most recent ones
+        const photosToRemove = oldPhotoCount - photosToKeep;
+
+        photoLogs.slice(0, photosToRemove).forEach(log => {
+            const index = fieldLogs.findIndex(l => l.entry_id === log.entry_id);
+            if (index !== -1) {
+                fieldLogs[index].photo_base64 = null;
+                fieldLogs[index].photo_removed = true;
+            }
+        });
+
+        console.log(`Removed ${photosToRemove} old photos, keeping ${photosToKeep} recent ones`);
+
+        // Save the cleaned up logs
+        try {
+            const cleanedJson = JSON.stringify(fieldLogs);
+            console.log(`New field logs size: ${Math.round(cleanedJson.length / 1024)}KB`);
+
+            localStorage.setItem('veritas_field_logs', cleanedJson);
+
+            // Check if it fits now
+            const storageUsed = JSON.stringify(localStorage).length;
+            const storageMB = (storageUsed / (1024 * 1024)).toFixed(2);
+            console.log(`Total storage after cleanup: ${storageMB}MB`);
+
+        } catch (error) {
+            console.error('Still too large after cleanup, removing all photos');
+            // More aggressive - remove all photos
+            fieldLogs.forEach(log => {
+                if (log.photo_base64) {
+                    log.photo_base64 = null;
+                    log.photo_removed = true;
+                }
+            });
+
+            try {
+                localStorage.setItem('veritas_field_logs', JSON.stringify(fieldLogs));
+                console.log('All photos removed - storage freed');
+            } catch (error) {
+                console.error('Even removing all photos failed');
+            }
+        }
+    }
+}
+
+function emergencyCleanup() {
+    console.log('Emergency cleanup - removing all photos');
+
+    fieldLogs.forEach(log => {
+        if (log.photo_base64) {
+            log.photo_base64 = null;
+            log.photo_removed = true;
+        }
+    });
+
+    try {
+        localStorage.setItem('veritas_field_logs', JSON.stringify(fieldLogs));
+        alert('Emergency cleanup complete! All photos have been removed to free storage space.');
+    } catch (error) {
+        console.error('Even emergency cleanup failed');
+        alert('Critical: Unable to save data. Please export and clear all data.');
+    }
+}
+
+function getStorageInfo() {
+    const storageUsed = JSON.stringify(localStorage).length;
+    const storageUsedKB = Math.round(storageUsed / 1024);
+    const storageUsedMB = (storageUsedKB / 1024).toFixed(2);
+
+    const fieldLogsSize = localStorage.getItem('veritas_field_logs')?.length || 0;
+    const fieldLogsKB = Math.round(fieldLogsSize / 1024);
+    const fieldLogsMB = (fieldLogsKB / 1024).toFixed(2);
+
+    console.log(`Total storage used: ${storageUsedKB}KB (${storageUsedMB}MB)`);
+    console.log(`Field logs size: ${fieldLogsKB}KB (${fieldLogsMB}MB)`);
+
+    return { storageUsedKB, fieldLogsKB, photoCount: fieldLogs.filter(l => l.photo_base64).length };
+}
+
+function showStorageInfo() {
+    const info = getStorageInfo();
+    const estimatedQuotaMB = 5; // Most browsers ~5MB limit
+    const percentUsed = ((info.storageUsedKB / 1024) / estimatedQuotaMB * 100).toFixed(1);
+
+    const message = `
+Storage Usage Information:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Total Used: ${info.storageUsedKB} KB (${(info.storageUsedKB / 1024).toFixed(2)} MB)
+Field Logs: ${info.fieldLogsKB} KB
+Photos: ${info.photoCount} photos stored
+Est. Usage: ${percentUsed}% of ~${estimatedQuotaMB}MB quota
+
+${percentUsed > 80 ? '⚠️  WARNING: Approaching storage limit!' : '✅ Storage usage is normal'}
+
+Recommendations:
+• Export data regularly to free up space
+• Consider deleting old photos after syncing
+• Use cloud sync to backup photos
+• Try "Clear All Data" if sync is failing
+${percentUsed > 80 ? '\n⚠️  Action needed: Export data and clear old photos' : ''}
+    `.trim();
+
+    if (confirm(message + '\n\nWould you like to export your data now to free up space?')) {
+        exportData();
+    }
+
+    if (percentUsed > 90 && confirm('Storage is critically full! Would you like to remove old photos now? (This will free significant space)')) {
+        cleanupOldPhotos();
+        alert('Cleanup completed! Old photos have been removed from local storage.');
+    }
+}
+
+function clearAllData() {
+    const message = `
+⚠️  DANGER: This will delete ALL local data!
+
+This action will:
+• Remove all projects from local storage
+• Remove all field logs from local storage
+• Clear all photos from local storage
+• NOT affect cloud data (if synced)
+
+IMPORTANT: Export your data first if you want to keep it!
+
+Are you absolutely sure you want to proceed?
+    `.trim();
+
+    if (!confirm(message)) {
+        return;
+    }
+
+    if (!confirm('FINAL WARNING: This cannot be undone! Are you sure?')) {
+        return;
+    }
+
+    // Clear all local storage
+    localStorage.removeItem('veritas_projects');
+    localStorage.removeItem('veritas_field_logs');
+    localStorage.removeItem('veritas_active_project');
+
+    // Reset in-memory variables
+    projects = [];
+    fieldLogs = [];
+    activeProject = null;
+
+    // Refresh the UI
+    window.loadProjects();
+    window.loadFieldLogs();
+    updateProjectSelect();
+
+    alert('✅ All local data has been cleared!\n\nStorage is now empty. You can:\n• Import previously exported data\n• Create new projects\n• Sync from cloud if logged in');
 }
 
 // --- Export / Import ---
@@ -43,6 +387,8 @@ function saveFieldLogs() {
 document.getElementById('exportBtn').addEventListener('click', exportData);
 document.getElementById('importBtn').addEventListener('click', () => document.getElementById('importFile').click());
 document.getElementById('importFile').addEventListener('change', importData);
+document.getElementById('storageBtn').addEventListener('click', showStorageInfo);
+document.getElementById('clearAllBtn').addEventListener('click', clearAllData);
 
 function exportData() {
     if (!activeProject) {
@@ -331,8 +677,18 @@ document.getElementById('fieldForm').addEventListener('submit', (e) => {
     let photoBase64 = null;
 
     const processEntry = (base64Img) => {
+        let entryId;
+        let attempts = 0;
+        const maxAttempts = 10;
+
+        // Ensure unique entry_id
+        do {
+            entryId = crypto.randomUUID();
+            attempts++;
+        } while (fieldLogs.some(log => log.entry_id === entryId) && attempts < maxAttempts);
+
         const entry = {
-            entry_id: crypto.randomUUID(),
+            entry_id: entryId,
             date: date,
             segment_id: segmentId,
             shift_output_blocks: blocksToday,
@@ -402,6 +758,43 @@ function renderFieldLogs() {
 
     if (fieldLogs.length > 0) {
         document.getElementById('fieldResultsSection').style.display = 'block';
+
+        // Fix mobile touch scrolling for table
+        setTimeout(() => {
+            const tableContainer = document.querySelector('#fieldLogsTable').parentElement;
+            if (tableContainer) {
+                // Prevent page scroll when scrolling table horizontally
+                let isScrolling = false;
+
+                tableContainer.addEventListener('touchstart', (e) => {
+                    isScrolling = false;
+                }, { passive: true });
+
+                tableContainer.addEventListener('touchmove', (e) => {
+                    const container = tableContainer;
+                    const canScrollHorizontally = container.scrollWidth > container.clientWidth;
+
+                    if (canScrollHorizontally) {
+                        const touch = e.touches[0];
+                        const startX = touch.clientX;
+                        const startY = touch.clientY;
+
+                        // Check if scrolling horizontally
+                        const diffX = Math.abs(touch.clientX - startX);
+                        const diffY = Math.abs(touch.clientY - startY);
+
+                        if (diffX > diffY) {
+                            e.preventDefault(); // Prevent page scroll
+                            isScrolling = true;
+                        }
+                    }
+                }, { passive: false });
+
+                tableContainer.addEventListener('touchend', () => {
+                    isScrolling = false;
+                }, { passive: true });
+            }
+        }, 100);
     }
 
     fieldLogs.forEach(log => {
@@ -413,6 +806,11 @@ function renderFieldLogs() {
 
         const location = (log.latitude && log.longitude) ? `${log.latitude}, ${log.longitude}` : '-';
 
+        // Ensure entry_id exists (for old logs)
+        if (!log.entry_id) {
+            log.entry_id = 'log_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9) + '_' + Math.floor(Math.random() * 1000000);
+        }
+
         tr.innerHTML = `
             <td>${log.date}</td>
             <td>${log.segment_id}</td>
@@ -422,12 +820,150 @@ function renderFieldLogs() {
             <td>${log.remaining_meters ? log.remaining_meters.toFixed(2) : '-'}</td>
             <td>${log.weather}</td>
             <td>${log.crew_size}</td>
-            <td style="font-size: 0.8em;">${location}</td>
+            <td style="font-size: 0.8em; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${location}">${location}</td>
             <td>${photoHtml}</td>
-            <td>${log.notes || ''}</td>
+            <td style="max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${log.notes || ''}">${log.notes || ''}</td>
+            <td>
+                <div style="display: flex; gap: 0px; align-items: center; min-width: 40px; justify-content: center;">
+                    <button class="btn small" style="background-color: #dc2626; color: white; padding: 0px; font-size: 0.5rem; line-height: 1; min-height: 16px; min-width: 16px; max-height: 16px; max-width: 16px; border-radius: 2px;"
+                            onclick="deleteFieldLogLocal('${log.entry_id}')" title="Delete locally">
+                        🗑️
+                    </button>
+                    ${currentUser ? `<button class="btn small" style="background-color: #b91c1c; color: white; padding: 0px; font-size: 0.5rem; line-height: 1; min-height: 16px; min-width: 16px; max-height: 16px; max-width: 16px; border-radius: 2px;"
+                            onclick="deleteFieldLogEverywhere('${log.entry_id}')" title="Delete everywhere">
+                        ☁️
+                    </button>` : ''}
+                </div>
+            </td>
         `;
         tbody.appendChild(tr);
     });
+}
+
+// Delete field log locally only
+window.deleteFieldLogLocal = function(entryId) {
+    if (!entryId) {
+        alert('Cannot delete log: No entry ID found');
+        return;
+    }
+
+    const logToDelete = fieldLogs.find(log => log.entry_id === entryId);
+    if (!logToDelete) {
+        alert('Log not found');
+        return;
+    }
+
+    const confirmMessage = `
+Delete this field log entry?
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Date: ${logToDelete.date}
+Segment: ${logToDelete.segment_id}
+Blocks: ${logToDelete.shift_output_blocks}
+Notes: ${logToDelete.notes || 'None'}
+
+This action cannot be undone!
+    `.trim();
+
+    if (!confirm(confirmMessage)) {
+        return;
+    }
+
+    // Remove from array
+    const index = fieldLogs.findIndex(log => log.entry_id === entryId);
+    if (index !== -1) {
+        fieldLogs.splice(index, 1);
+
+        // Save to localStorage
+        saveFieldLogs();
+
+        // Re-render the table
+        renderFieldLogs();
+
+        // Show success message
+        alert('✅ Field log deleted successfully!');
+
+        // If no more logs, hide the section
+        if (fieldLogs.length === 0) {
+            document.getElementById('fieldResultsSection').style.display = 'none';
+        }
+    }
+}
+
+// Delete field log from device AND cloud
+window.deleteFieldLogEverywhere = async function(entryId) {
+    if (!entryId) {
+        alert('Cannot delete log: No entry ID found');
+        return;
+    }
+
+    if (!currentUser) {
+        alert('You must be logged in to delete from cloud');
+        return;
+    }
+
+    const logToDelete = fieldLogs.find(log => log.entry_id === entryId);
+    if (!logToDelete) {
+        alert('Log not found');
+        return;
+    }
+
+    const confirmMessage = `
+Delete this field log EVERYWHERE?
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Date: ${logToDelete.date}
+Segment: ${logToDelete.segment_id}
+Blocks: ${logToDelete.shift_output_blocks}
+Notes: ${logToDelete.notes || 'None'}
+
+This will delete from:
+• This device (localStorage)
+• Cloud database (Supabase)
+
+⚠️  This CANNOT be undone!
+    `.trim();
+
+    if (!confirm(confirmMessage)) {
+        return;
+    }
+
+    if (!confirm('FINAL WARNING: This will permanently delete the log from all devices! Are you absolutely sure?')) {
+        return;
+    }
+
+    try {
+        // Delete from cloud first
+        const { error } = await supabase
+            .from('field_logs')
+            .delete()
+            .eq('entry_id', entryId);
+
+        if (error) {
+            alert(`Failed to delete from cloud: ${error.message}`);
+            return;
+        }
+
+        // Remove from local array
+        const index = fieldLogs.findIndex(log => log.entry_id === entryId);
+        if (index !== -1) {
+            fieldLogs.splice(index, 1);
+
+            // Save to localStorage
+            saveFieldLogs();
+
+            // Re-render the table
+            renderFieldLogs();
+
+            // Show success message
+            alert('✅ Field log deleted from device AND cloud!');
+
+            // If no more logs, hide the section
+            if (fieldLogs.length === 0) {
+                document.getElementById('fieldResultsSection').style.display = 'none';
+            }
+        }
+    } catch (error) {
+        alert(`Error deleting from cloud: ${error.message}`);
+    }
 }
 
 document.getElementById('fieldProvenanceBtn').addEventListener('click', async () => {
@@ -535,6 +1071,12 @@ document.getElementById('simForm').addEventListener('submit', async (e) => {
     };
 
     try {
+        // Check if offline
+        if (!navigator.onLine) {
+            alert('⚠️ Offline Mode\n\nSimulation requires internet connection to the API server.\n\nPlease connect to WiFi or mobile data and try again.\n\nLocal data entry and PDF generation still work!');
+            return;
+        }
+
         const response = await fetch(`${API_URL}/simulate`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -557,7 +1099,11 @@ document.getElementById('simForm').addEventListener('submit', async (e) => {
 
     } catch (err) {
         console.error(err);
-        alert('Failed to connect to API. Is it running?');
+        if (!navigator.onLine) {
+            alert('⚠️ Offline Mode\n\nSimulation requires internet connection to the API server.\n\nPlease connect to WiFi or mobile data and try again.\n\nLocal data entry and PDF generation still work!');
+        } else {
+            alert('Failed to connect to API. Is it running?');
+        }
     }
 });
 
