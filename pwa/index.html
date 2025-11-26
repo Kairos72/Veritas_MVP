@@ -151,6 +151,7 @@
         <!-- Mode Selection Tabs -->
         <div class="tabs">
             <button class="tab-btn active" onclick="switchTab('simulation')">Simulation Mode</button>
+            <button class="tab-btn" onclick="switchTab('segments')">Segments</button>
             <button class="tab-btn" onclick="switchTab('fieldEntry')">Field Entry Mode</button>
         </div>
 
@@ -206,6 +207,77 @@
             </section>
         </div>
 
+        <!-- Segments Management -->
+        <div id="segments" class="tab-content" style="display: none;">
+            <section class="card">
+                <div class="section-header">
+                    <h2>Segments Management</h2>
+                    <button id="newSegmentBtn" class="btn primary">Add New Segment</button>
+                </div>
+
+                <!-- Segments List -->
+                <div id="segmentsListContainer">
+                    <div class="table-container">
+                        <table id="segmentsTable">
+                            <thead>
+                                <tr>
+                                    <th>Segment ID</th>
+                                    <th>Length (m)</th>
+                                    <th>Width (m)</th>
+                                    <th>Block Length (m)</th>
+                                    <th>Total Blocks</th>
+                                    <th>Blocks Remaining</th>
+                                    <th>Chainage Start</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="segmentsTableBody">
+                                <!-- Segments will be populated here -->
+                            </tbody>
+                        </table>
+                        <div id="noSegmentsMessage" style="text-align: center; padding: 40px; color: #666; display: none;">
+                            <p>No segments created yet.</p>
+                            <p>Click "Add New Segment" to get started.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- New Segment Form (Hidden by default) -->
+                <form id="newSegmentForm" style="display: none; margin-top: 20px; border-top: 1px solid #eee; padding-top: 20px;">
+                    <h3 id="segmentFormTitle">Create New Segment</h3>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Segment ID</label>
+                            <input type="text" id="segId" required placeholder="SEG-001">
+                        </div>
+                        <div class="form-group">
+                            <label>Chainage Start (optional)</label>
+                            <input type="text" id="segChainageStart" placeholder="0+000">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Length (m)</label>
+                            <input type="number" id="segLength" required step="0.1" placeholder="50">
+                        </div>
+                        <div class="form-group">
+                            <label>Width (m)</label>
+                            <input type="number" id="segWidth" required step="0.1" placeholder="3.5">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Block Length (m)</label>
+                        <input type="number" id="segBlockLength" value="4.5" step="0.1" required>
+                        <small>Standard block length is 4.5 meters</small>
+                    </div>
+                    <div class="form-row">
+                        <button type="submit" class="btn primary">Save Segment</button>
+                        <button type="button" id="cancelSegmentBtn" class="btn secondary" style="background-color: #9ca3af;">Cancel</button>
+                    </div>
+                </form>
+            </section>
+        </div>
+
         <!-- Field Entry Mode -->
         <div id="fieldEntry" class="tab-content" style="display: none;">
             <section class="card">
@@ -217,18 +289,21 @@
                             <input type="date" id="fieldDate" required>
                         </div>
                         <div class="form-group">
-                            <label>Segment ID</label>
-                            <input type="text" id="fieldSegmentId" placeholder="SEG-001" required>
+                            <label>Select Segment</label>
+                            <select id="segmentSelect" required>
+                                <option value="">-- Select a Segment --</option>
+                            </select>
+                            <input type="hidden" id="fieldSegmentId">
                         </div>
                     </div>
-                    <div class="form-row">
+                    <div class="form-row" id="segmentInfoRow" style="display: none;">
                         <div class="form-group">
                             <label>Segment Length (m)</label>
-                            <input type="number" id="fieldSegLength" value="50" required>
+                            <input type="number" id="fieldSegLength" readonly style="background-color: #f9f9f9;">
                         </div>
                         <div class="form-group">
                             <label>Block Length (m)</label>
-                            <input type="number" id="fieldBlockLength" value="1.0" step="0.1" required>
+                            <input type="number" id="fieldBlockLength" readonly style="background-color: #f9f9f9;">
                         </div>
                     </div>
                     <div class="form-row">

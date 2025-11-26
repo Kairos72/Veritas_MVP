@@ -34,7 +34,10 @@ class SyncClient {
             // 1. Sync Projects
             await this.syncProjects();
 
-            // 2. Sync Field Logs
+            // 2. Sync Segments
+            await this.syncSegments();
+
+            // 3. Sync Field Logs
             await this.syncFieldLogs();
 
             // Update UI safely
@@ -47,6 +50,7 @@ class SyncClient {
             // Refresh UI if needed (reload projects/logs from local storage which might have been updated)
             // We need to expose loadProjects/loadFieldLogs globally or trigger event
             if (window.loadProjects) window.loadProjects();
+            if (window.loadSegments) window.loadSegments();
             if (window.loadFieldLogs) window.loadFieldLogs();
 
         } catch (err) {
@@ -141,6 +145,149 @@ class SyncClient {
         if (error) console.error("Error uploading project:", error);
     }
 
+    async syncSegments() {
+        const localSegments = JSON.parse(localStorage.getItem('veritas_segments') || '[]');
+
+        // Get remote segments
+        const { data: remoteSegments, error } = await supabase
+            .from('segments')
+            .select('*');
+
+        if (error) throw error;
+
+        let hasChanges = false;
+
+        // Merge Logic similar to projects
+        // 1. Upload local segments that are new or newer than remote
+        for (const local of localSegments) {
+            const remote = remoteSegments.find(r => r.segment_id === local.segment_id);
+
+            if (!remote) {
+                // New local segment -> Upload
+                await this.uploadSegment(local);
+                hasChanges = true;
+            } else if (new Date(local.updated_at) > new Date(remote.updated_at)) {
+                // Local is newer -> Upload
+                await this.uploadSegment(local);
+                hasChanges = true;
+            }
+        }
+
+        // 2. Download remote segments that are newer
+        for (const remote of remoteSegments) {
+            const local = localSegments.find(l => l.segment_id === remote.segment_id);
+
+            if (!local) {
+                // New remote segment -> Download
+                await this.downloadSegment(remote);
+                hasChanges = true;
+            } else if (new Date(remote.updated_at) > new Date(local.updated_at)) {
+                // Remote is newer -> Download
+                await this.downloadSegment(remote);
+                hasChanges = true;
+            }
+        }
+
+        if (hasChanges) {
+            console.log("Segments synced successfully");
+        }
+    }
+
+    async uploadSegment(segment) {
+        const payload = {
+            segment_id: segment.segment_id,
+            length_m: segment.length_m,
+            width_m: segment.width_m,
+            block_length_m: segment.block_length_m,
+            chainage_start: segment.chainage_start,
+            created_at: segment.created_at,
+            updated_at: segment.updated_at,
+            user_id: currentUser.id
+        };
+
+        const { error } = await supabase
+            .from('segments')
+            .upsert(payload, { onConflict: 'segment_id' });
+
+        if (error) console.error("Error uploading segment:", error);
+    }
+
+    async downloadSegment(segment) {
+        // Get current local segments
+        const localSegments = JSON.parse(localStorage.getItem('veritas_segments') || '[]');
+
+        // Find if segment exists locally
+        const existingIndex = localSegments.findIndex(l => l.segment_id === segment.segment_id);
+
+        // Remove user_id field from cloud data before storing locally
+        const localSegment = {
+            segment_id: segment.segment_id,
+            length_m: segment.length_m,
+            width_m: segment.width_m,
+            block_length_m: segment.block_length_m,
+            chainage_start: segment.chainage_start,
+            created_at: segment.created_at,
+            updated_at: segment.updated_at
+        };
+
+        if (existingIndex >= 0) {
+            // Update existing segment
+            localSegments[existingIndex] = localSegment;
+        } else {
+            // Add new segment
+            localSegments.push(localSegment);
+        }
+
+        localStorage.setItem('veritas_segments', JSON.stringify(localSegments));
+        console.log(`Downloaded segment ${segment.segment_id} from cloud`);
+    }
+
+    async ensureSegmentExists(segmentId) {
+        // Check if segment already exists locally
+        const localSegments = JSON.parse(localStorage.getItem('veritas_segments') || '[]');
+        const existingSegment = localSegments.find(s => s.segment_id === segmentId);
+
+        if (existingSegment) {
+            return; // Segment already exists
+        }
+
+        // Try to get segment from cloud
+        try {
+            const { data: remoteSegment, error } = await supabase
+                .from('segments')
+                .select('*')
+                .eq('segment_id', segmentId)
+                .single();
+
+            if (error && error.code !== 'PGRST116') { // PGRST116 = not found
+                console.error('Error fetching segment from cloud:', error);
+                return;
+            }
+
+            if (remoteSegment) {
+                // Download the actual segment from cloud
+                await this.downloadSegment(remoteSegment);
+            } else {
+                // Create a placeholder segment
+                const placeholderSegment = {
+                    segment_id: segmentId,
+                    length_m: 50, // Default values
+                    width_m: 3.5,
+                    block_length_m: 4.5,
+                    chainage_start: null,
+                    created_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString()
+                };
+
+                localSegments.push(placeholderSegment);
+                localStorage.setItem('veritas_segments', JSON.stringify(localSegments));
+                console.log(`Created placeholder segment: ${segmentId}`);
+            }
+        } catch (error) {
+            console.error('Error ensuring segment exists:', error);
+        }
+    }
+
     async syncFieldLogs() {
         const localLogs = JSON.parse(localStorage.getItem('veritas_field_logs') || '[]');
 
@@ -153,23 +300,28 @@ class SyncClient {
 
         let hasChanges = false;
 
-        // Check for locally deleted logs (logs that exist remotely but not locally)
-        const locallyDeletedLogs = remoteLogs.filter(remote =>
+        // Check for missing local logs (logs that exist remotely but not locally)
+        const missingLocalLogs = remoteLogs.filter(remote =>
             !localLogs.find(local => local.entry_id === remote.entry_id)
         );
 
-        // Handle deletions - ask user what to do
-        if (locallyDeletedLogs.length > 0) {
-            const deleteRemote = confirm(
-                `Found ${locallyDeletedLogs.length} log(s) that were deleted locally.\n\n` +
-                `Do you want to delete them from the cloud as well?\n\n` +
-                `• "OK" = Delete from cloud permanently\n` +
-                `• "Cancel" = Keep them in cloud and restore locally`
+        // Handle missing local logs - ask user what to do
+        let shouldDeleteRemote = false; // Default: don't delete
+        let processedLogIds = []; // Track processed log IDs
+
+        if (missingLocalLogs.length > 0) {
+            const action = confirm(
+                `Found ${missingLocalLogs.length} field log(s) in the cloud that are not on this device.\n\n` +
+                `This is normal when syncing from another device (like your mobile).\n\n` +
+                `• "OK" = Download these logs to this device\n` +
+                `• "Cancel" = Delete them from the cloud permanently`
             );
 
-            if (deleteRemote) {
-                // Delete from cloud
-                for (const logToDelete of locallyDeletedLogs) {
+            shouldDeleteRemote = !action; // Invert: OK = download, Cancel = delete
+
+            if (shouldDeleteRemote) {
+                // User chose to delete from cloud
+                for (const logToDelete of missingLocalLogs) {
                     const { error: deleteError } = await supabase
                         .from('field_logs')
                         .delete()
@@ -182,8 +334,21 @@ class SyncClient {
                     }
                 }
             } else {
-                // User chose to keep them - they will be restored locally below
-                console.log('User chose to keep remote logs locally');
+                // User chose to download them - immediately add to localLogs
+                console.log('User chose to download remote logs to this device');
+
+                for (const logToDownload of missingLocalLogs) {
+                    // Check if segment exists locally, create placeholder if missing
+                    if (logToDownload.segment_id) {
+                        await this.ensureSegmentExists(logToDownload.segment_id);
+                    }
+
+                    // Add to local logs
+                    localLogs.push(logToDownload);
+                    hasChanges = true;
+                    console.log(`Downloaded log ${logToDownload.entry_id} to this device`);
+                    processedLogIds.push(logToDownload.entry_id); // Track processed logs
+                }
             }
         }
 
@@ -204,12 +369,17 @@ class SyncClient {
             }
         }
 
-        // 2. Download missing remote logs (excluding those marked for deletion)
+        // 2. Download remaining missing remote logs (excluding those already processed)
         for (const remote of remoteLogs) {
             const local = localLogs.find(l => l.entry_id === remote.entry_id);
             if (!local) {
-                // Only download if this log wasn't marked for deletion in this sync cycle
-                if (!locallyDeletedLogs.find(del => del.entry_id === remote.entry_id)) {
+                // Only download if this log wasn't already processed above
+                if (!processedLogIds.includes(remote.entry_id)) {
+                    // Check if segment exists locally, create placeholder if missing
+                    if (remote.segment_id) {
+                        await this.ensureSegmentExists(remote.segment_id);
+                    }
+
                     localLogs.push(remote);
                     hasChanges = true;
                 }

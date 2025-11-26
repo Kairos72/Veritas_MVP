@@ -54,7 +54,34 @@ async function generateLocalPDF(project, logs) {
     doc.setFont("helvetica", "normal");
     doc.setFontSize(12);
 
-    for (const log of logs) {
+    // Group logs by segment
+    const logsBySegment = {};
+    logs.forEach(log => {
+        if (!logsBySegment[log.segment_id]) {
+            logsBySegment[log.segment_id] = [];
+        }
+        logsBySegment[log.segment_id].push(log);
+    });
+
+    // Sort segments by ID for consistent ordering
+    const sortedSegmentIds = Object.keys(logsBySegment).sort();
+
+    // Process each segment
+    for (const segmentId of sortedSegmentIds) {
+        const segmentLogs = logsBySegment[segmentId];
+
+        // Add segment header if multiple segments
+        if (sortedSegmentIds.length > 1) {
+            doc.setFont("helvetica", "bold");
+            doc.setFontSize(14);
+            doc.text(`=== Segment ${segmentId} ===`, margin, y);
+            y += 10;
+        }
+
+        // Process logs for this segment (sorted by date)
+        const sortedLogs = segmentLogs.sort((a, b) => new Date(a.date) - new Date(b.date));
+
+        for (const log of sortedLogs) {
         // Check for page break
         if (y > 250) {
             doc.addPage();
@@ -130,8 +157,14 @@ async function generateLocalPDF(project, logs) {
         }
 
         y += 5;
-        doc.line(margin, y, pageWidth - margin, y);
-        y += 10;
+            doc.line(margin, y, pageWidth - margin, y);
+            y += 10;
+        }
+
+        // Add spacing between segments
+        if (sortedSegmentIds.length > 1) {
+            y += 10;
+        }
     }
 
     return doc.output('blob');

@@ -4,6 +4,7 @@ let currentLogs = [];
 let projects = [];
 let activeProject = null;
 let fieldLogs = [];
+let segments = [];
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
@@ -16,8 +17,10 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     window.loadProjects();
+    window.loadSegments();
     window.loadFieldLogs();
     updateProjectSelect();
+    updateSegmentSelect();
 
     // Improve overall mobile touch behavior
     document.body.style.touchAction = 'pan-y'; // Allow vertical scrolling by default
@@ -106,6 +109,224 @@ window.loadFieldLogs = function () {
         renderFieldLogs();
     }
 }
+
+// --- Segments Management ---
+
+// Load segments from LocalStorage
+window.loadSegments = function () {
+    const stored = localStorage.getItem('veritas_segments');
+    if (stored) {
+        segments = JSON.parse(stored);
+    }
+    console.log('Loaded segments:', segments.length);
+};
+
+// Save segments to LocalStorage
+function saveSegments() {
+    localStorage.setItem('veritas_segments', JSON.stringify(segments));
+    updateSegmentSelect();
+}
+
+// Create or update a segment
+window.saveSegment = function (segmentData) {
+    const existingIndex = segments.findIndex(s => s.segment_id === segmentData.segment_id);
+
+    if (existingIndex >= 0) {
+        // Update existing segment
+        segments[existingIndex] = { ...segments[existingIndex], ...segmentData };
+        console.log('Updated segment:', segmentData.segment_id);
+    } else {
+        // Add new segment
+        const newSegment = {
+            segment_id: segmentData.segment_id,
+            length_m: parseFloat(segmentData.length_m),
+            width_m: parseFloat(segmentData.width_m),
+            block_length_m: parseFloat(segmentData.block_length_m) || 4.5,
+            chainage_start: segmentData.chainage_start || null,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+        };
+        segments.push(newSegment);
+        console.log('Created new segment:', segmentData.segment_id);
+    }
+
+    saveSegments();
+
+    // Sync to cloud if online and logged in
+    if (navigator.onLine && window.supabaseClient) {
+        syncSegmentToCloud(segmentData);
+    }
+};
+
+// Delete a segment
+window.deleteSegment = function (segmentId) {
+    const index = segments.findIndex(s => s.segment_id === segmentId);
+    if (index >= 0) {
+        segments.splice(index, 1);
+        saveSegments();
+        console.log('Deleted segment:', segmentId);
+
+        // Also delete from cloud if online and logged in
+        if (navigator.onLine && window.supabaseClient) {
+            deleteSegmentFromCloud(segmentId);
+        }
+    }
+};
+
+// Get segment by ID
+function getSegment(segmentId) {
+    return segments.find(s => s.segment_id === segmentId);
+}
+
+// Calculate remaining blocks for a segment
+function calculateRemainingBlocks(segment) {
+    if (!segment) return 0;
+
+    // Get all field logs for this segment
+    const segmentLogs = fieldLogs.filter(log => log.segment_id === segment.segment_id);
+
+    // Sum completed blocks
+    const completedBlocks = segmentLogs.reduce((sum, log) => sum + (parseFloat(log.blocks_completed) || 0), 0);
+
+    // Calculate total blocks
+    const totalBlocks = Math.floor(segment.length_m / segment.block_length_m);
+
+    return Math.max(0, totalBlocks - completedBlocks);
+}
+
+// --- Cloud Sync Functions for Segments ---
+
+// Sync segment to cloud (if online and logged in)
+function syncSegmentToCloud(segmentData) {
+    if (!window.supabaseClient || !window.currentUser) {
+        return;
+    }
+
+    const payload = {
+        segment_id: segmentData.segment_id,
+        length_m: segmentData.length_m,
+        width_m: segmentData.width_m,
+        block_length_m: segmentData.block_length_m,
+        chainage_start: segmentData.chainage_start,
+        created_at: segmentData.created_at,
+        updated_at: segmentData.updated_at,
+        user_id: window.currentUser.id
+    };
+
+    window.supabaseClient
+        .from('segments')
+        .upsert(payload, { onConflict: 'segment_id' })
+        .then(({ error }) => {
+            if (error) {
+                console.error('Failed to sync segment to cloud:', error);
+            } else {
+                console.log('Segment synced to cloud:', segmentData.segment_id);
+            }
+        });
+}
+
+// Delete segment from cloud
+function deleteSegmentFromCloud(segmentId) {
+    if (!window.supabaseClient || !window.currentUser) {
+        return;
+    }
+
+    window.supabaseClient
+        .from('segments')
+        .delete()
+        .eq('segment_id', segmentId)
+        .eq('user_id', window.currentUser.id)
+        .then(({ error }) => {
+            if (error) {
+                console.error('Failed to delete segment from cloud:', error);
+            } else {
+                console.log('Segment deleted from cloud:', segmentId);
+            }
+        });
+}
+
+// Render segments table
+window.renderSegmentsTable = function () {
+    const tbody = document.getElementById('segmentsTableBody');
+    const noSegmentsMsg = document.getElementById('noSegmentsMessage');
+
+    if (!tbody) return; // Not on segments tab
+
+    if (segments.length === 0) {
+        tbody.innerHTML = '';
+        noSegmentsMsg.style.display = 'block';
+        return;
+    }
+
+    noSegmentsMsg.style.display = 'none';
+    tbody.innerHTML = '';
+
+    // Sort segments by ID
+    const sortedSegments = [...segments].sort((a, b) => a.segment_id.localeCompare(b.segment_id));
+
+    sortedSegments.forEach(segment => {
+        const totalBlocks = Math.floor(segment.length_m / segment.block_length_m);
+        const remainingBlocks = calculateRemainingBlocks(segment);
+
+        const row = document.createElement('tr');
+        row.innerHTML = `
+            <td><strong>${segment.segment_id}</strong></td>
+            <td>${segment.length_m}</td>
+            <td>${segment.width_m}</td>
+            <td>${segment.block_length_m}</td>
+            <td>${totalBlocks}</td>
+            <td>${remainingBlocks}</td>
+            <td>${segment.chainage_start || '-'}</td>
+            <td>
+                <div style="display: flex; gap: 4px;">
+                    <button onclick="editSegment('${segment.segment_id}')" style="background: none; border: none; cursor: pointer; font-size: 1.2em;" title="Edit">✏️</button>
+                    <button onclick="deleteSegmentConfirm('${segment.segment_id}')" style="background: none; border: none; cursor: pointer; font-size: 1.2em; color: #ef4444;" title="Delete">🗑️</button>
+                </div>
+            </td>
+        `;
+        tbody.appendChild(row);
+    });
+};
+
+// Edit segment
+window.editSegment = function (segmentId) {
+    const segment = getSegment(segmentId);
+    if (!segment) return;
+
+    // Populate form with segment data
+    document.getElementById('segId').value = segment.segment_id;
+    document.getElementById('segLength').value = segment.length_m;
+    document.getElementById('segWidth').value = segment.width_m;
+    document.getElementById('segBlockLength').value = segment.block_length_m;
+    document.getElementById('segChainageStart').value = segment.chainage_start || '';
+
+    // Change form title and show form
+    document.getElementById('segmentFormTitle').textContent = 'Edit Segment';
+    document.getElementById('newSegmentForm').style.display = 'block';
+    document.getElementById('newSegmentBtn').style.display = 'none';
+};
+
+// Delete segment with confirmation
+window.deleteSegmentConfirm = function (segmentId) {
+    const segment = getSegment(segmentId);
+    if (!segment) return;
+
+    const confirmDelete = confirm(`Are you sure you want to delete segment ${segmentId}?\n\nThis will also remove all field logs associated with this segment.`);
+    if (confirmDelete) {
+        // Also remove associated field logs
+        fieldLogs = fieldLogs.filter(log => log.segment_id !== segmentId);
+        localStorage.setItem('veritas_field_logs', JSON.stringify(fieldLogs));
+
+        // Delete the segment
+        window.deleteSegment(segmentId);
+
+        // Refresh tables
+        renderSegmentsTable();
+        if (typeof renderFieldLogs === 'function') {
+            renderFieldLogs();
+        }
+    }
+};
 
 // Fix duplicate entry IDs by generating new ones for duplicates
 function fixDuplicateEntryIds(logs) {
@@ -366,18 +587,22 @@ Are you absolutely sure you want to proceed?
 
     // Clear all local storage
     localStorage.removeItem('veritas_projects');
+    localStorage.removeItem('veritas_segments');
     localStorage.removeItem('veritas_field_logs');
     localStorage.removeItem('veritas_active_project');
 
     // Reset in-memory variables
     projects = [];
     fieldLogs = [];
+    segments = [];
     activeProject = null;
 
     // Refresh the UI
     window.loadProjects();
+    window.loadSegments();
     window.loadFieldLogs();
     updateProjectSelect();
+    updateSegmentSelect();
 
     alert('✅ All local data has been cleared!\n\nStorage is now empty. You can:\n• Import previously exported data\n• Create new projects\n• Sync from cloud if logged in');
 }
@@ -389,6 +614,71 @@ document.getElementById('importBtn').addEventListener('click', () => document.ge
 document.getElementById('importFile').addEventListener('change', importData);
 document.getElementById('storageBtn').addEventListener('click', showStorageInfo);
 document.getElementById('clearAllBtn').addEventListener('click', clearAllData);
+
+// --- Segments Event Listeners ---
+document.getElementById('newSegmentBtn').addEventListener('click', () => {
+    document.getElementById('newSegmentForm').style.display = 'block';
+    document.getElementById('newSegmentBtn').style.display = 'none';
+    document.getElementById('segmentFormTitle').textContent = 'Create New Segment';
+    document.getElementById('newSegmentForm').reset();
+});
+
+document.getElementById('cancelSegmentBtn').addEventListener('click', () => {
+    document.getElementById('newSegmentForm').style.display = 'none';
+    document.getElementById('newSegmentBtn').style.display = 'inline-block';
+});
+
+document.getElementById('newSegmentForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+
+    const segmentData = {
+        segment_id: document.getElementById('segId').value,
+        length_m: parseFloat(document.getElementById('segLength').value),
+        width_m: parseFloat(document.getElementById('segWidth').value),
+        block_length_m: parseFloat(document.getElementById('segBlockLength').value),
+        chainage_start: document.getElementById('segChainageStart').value || null
+    };
+
+    window.saveSegment(segmentData);
+
+    // Reset UI
+    document.getElementById('newSegmentForm').reset();
+    document.getElementById('newSegmentForm').style.display = 'none';
+    document.getElementById('newSegmentBtn').style.display = 'inline-block';
+
+    // Refresh segments table
+    renderSegmentsTable();
+});
+
+// Segment selection dropdown change handler
+document.addEventListener('DOMContentLoaded', () => {
+    // Add this after DOM is loaded
+    const segmentSelect = document.getElementById('segmentSelect');
+    if (segmentSelect) {
+        segmentSelect.addEventListener('change', (e) => {
+            const selectedSegmentId = e.target.value;
+            const hiddenInput = document.getElementById('fieldSegmentId');
+            const infoRow = document.getElementById('segmentInfoRow');
+            const lengthInput = document.getElementById('fieldSegLength');
+            const blockLengthInput = document.getElementById('fieldBlockLength');
+
+            if (selectedSegmentId) {
+                const segment = getSegment(selectedSegmentId);
+                if (segment) {
+                    hiddenInput.value = selectedSegmentId;
+                    lengthInput.value = segment.length_m;
+                    blockLengthInput.value = segment.block_length_m;
+                    infoRow.style.display = 'flex';
+                }
+            } else {
+                hiddenInput.value = '';
+                infoRow.style.display = 'none';
+                lengthInput.value = '';
+                blockLengthInput.value = '';
+            }
+        });
+    }
+});
 
 function exportData() {
     if (!activeProject) {
@@ -512,6 +802,33 @@ function updateProjectSelect(selectedValue = "") {
     });
 
     if (selectedValue !== "") {
+        select.value = selectedValue;
+    }
+}
+
+// Update segment selection dropdown
+function updateSegmentSelect(selectedValue = "") {
+    const select = document.getElementById('segmentSelect');
+    if (!select) return;
+
+    select.innerHTML = '<option value="">-- Select a Segment --</option>';
+
+    // Sort segments by ID for consistent ordering
+    segments.sort((a, b) => a.segment_id.localeCompare(b.segment_id));
+
+    segments.forEach(segment => {
+        const option = document.createElement('option');
+        option.value = segment.segment_id;
+
+        // Calculate remaining blocks
+        const remainingBlocks = calculateRemainingBlocks(segment);
+        const totalBlocks = Math.floor(segment.length_m / segment.block_length_m);
+
+        option.textContent = `${segment.segment_id} (${segment.length_m}m × ${segment.width_m}m) - ${remainingBlocks}/${totalBlocks} blocks remaining`;
+        select.appendChild(option);
+    });
+
+    if (selectedValue) {
         select.value = selectedValue;
     }
 }
@@ -797,7 +1114,41 @@ function renderFieldLogs() {
         }, 100);
     }
 
-    fieldLogs.forEach(log => {
+    // Sort logs by segment_id, then by date (newest first)
+    const sortedLogs = [...fieldLogs].sort((a, b) => {
+        if (a.segment_id !== b.segment_id) {
+            return a.segment_id.localeCompare(b.segment_id);
+        }
+        return new Date(b.date) - new Date(a.date);
+    });
+
+    // Group logs by segment
+    const logsBySegment = {};
+    sortedLogs.forEach(log => {
+        if (!logsBySegment[log.segment_id]) {
+            logsBySegment[log.segment_id] = [];
+        }
+        logsBySegment[log.segment_id].push(log);
+    });
+
+    // Render logs grouped by segment
+    Object.keys(logsBySegment).forEach(segmentId => {
+        const segmentLogs = logsBySegment[segmentId];
+        const segment = getSegment(segmentId);
+
+        // Add segment header row
+        if (Object.keys(logsBySegment).length > 1) {
+            const headerRow = document.createElement('tr');
+            headerRow.innerHTML = `
+                <td colspan="12" style="background-color: #f3f4f6; font-weight: bold; padding: 8px; border-left: 4px solid #2563eb;">
+                    ${segment ? `${segment.segment_id} (${segment.length_m}m × ${segment.width_m}m)` : segmentId}
+                </td>
+            `;
+            tbody.appendChild(headerRow);
+        }
+
+        // Add logs for this segment
+        segmentLogs.forEach(log => {
         const tr = document.createElement('tr');
         let photoHtml = '-';
         if (log.photo_base64) {
@@ -837,6 +1188,7 @@ function renderFieldLogs() {
             </td>
         `;
         tbody.appendChild(tr);
+        });
     });
 }
 
@@ -1163,4 +1515,28 @@ function renderLogs(logs) {
         `;
         tbody.appendChild(tr);
     });
+}
+
+// Tab switching function
+window.switchTab = function(tabName) {
+    // Hide all tab contents
+    document.querySelectorAll('.tab-content').forEach(content => {
+        content.style.display = 'none';
+    });
+
+    // Remove active class from all tab buttons
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.remove('active');
+    });
+
+    // Show selected tab
+    document.getElementById(tabName).style.display = 'block';
+
+    // Add active class to clicked button
+    event.target.classList.add('active');
+
+    // Render segments table when switching to segments tab
+    if (tabName === 'segments') {
+        renderSegmentsTable();
+    }
 }
