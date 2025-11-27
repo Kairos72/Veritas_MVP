@@ -30,14 +30,16 @@ Simply open `pwa/index.html` in a modern web browser. The app includes a service
 
 ### Testing
 - **Engine Tests**: Located in `/engine/tests/` - Run using standard Python test methods in the engine directory
-- **Automated PWA Testing**: Playwright test suite for end-to-end browser automation
-  - Location: `/tests/` directory
+- **Automated PWA Testing**: Professional Playwright test suite for end-to-end browser automation
+  - Location: `/tests/` directory (cleaned and organized November 2025)
+  - Test Files: `complete-end-to-end-test.spec.js`, `field-entry-workflow.spec.js`, `simple-working-test.spec.js`
   - Setup: `cd tests && npm install && npx playwright install`
   - Run tests: `npm test` (headless) or `npm run test:headed` (browser visible)
   - Debug tests: `npm run test:debug`
-  - Coverage: Field entry workflow, asset creation, work item matching, UI navigation
+  - Coverage: Field entry workflow, asset creation, work item matching, UI navigation, end-to-end scenarios
   - Features: Screenshot capture, video recording, console logging, LocalStorage inspection
   - Reports: HTML report generated automatically - view with `npx playwright show-report`
+  - Clean Repository: All generated artifacts (node_modules, test-results, reports) excluded from version control
 
 ## Architecture Overview
 
@@ -64,6 +66,8 @@ The system uses JSON schemas defined in `/engine/schema/`:
 - `/engine/api/app.py`: Flask API server providing `/simulate` and `/provenance` endpoints
 - `/engine/generator/generator.py`: Simulation logic that generates realistic construction progress based on weather, crew size, and productivity factors
 - `/engine/provenance/provenance.py`: PDF generation using fpdf to create "Statement of Work Accomplished" documents with SHA-256 hashing
+- `/engine/schema/`: JSON schema definitions for assets, work items, and field logs with examples
+- `/database/`: Database schema and migration files (cleaned November 2025)
 
 ### PWA Frontend Structure
 - `app.js`: Main application logic, project management, and LocalStorage persistence (2000+ lines)
@@ -109,25 +113,58 @@ Uses Supabase for authentication and data sync. Configuration in `config.js` req
 - `POST /provenance`: Create provenance PDF from shift logs
 - `GET /output/<filename>`: Serve generated PDF files
 
-### Current State (Post-TASK 18 Development)
+### Current State (November 2025 - Production Ready)
 - **Universal Infrastructure System**: Clean UI with **Assets**, Field Entry, and Photo Gallery tabs
 - **Universal Asset Management**: Supports 8+ asset types (road_section, building, flood_control, bridge, culvert, utility, landscaping, other)
 - **Intelligent Work Item Matching**: Smart algorithm matches field entries by item_code → work_type → auto-creates
 - **Asset Templates**: Pre-built templates for roads, buildings, and flood control with common work items
 - **Real-time Progress Tracking**: Progress calculated at work item and asset levels with visual indicators
 - **Enhanced Data Model**: Assets, Work Items, and Field Logs with full backwards compatibility to legacy segments
-- **PDF Generation**: Grouped by Asset → Work Item structure with comprehensive progress reporting
+- **PDF Generation**: **Enhanced compact layout** with photos positioned at top-right corner, smaller fonts (9pt), reduced spacing, and clean progress displays
+- **Progress Display**: Fixed misleading hardcoded defaults - shows clean progress (e.g., "15 blocks" instead of "15/1000 blocks") when no target set
+- **Photo Management**: Optimized photo positioning (80×60px) at entry box top-right with GPS overlays and QR codes
+- **API Configuration**: Fixed local development URL (localhost:5000) and added missing getWorkItem function for PDF compatibility
 - **Sync & Export**: Full bidirectional sync for assets and work items, enhanced export/import with v2 format
 - **Simulation Engine**: Retained for internal testing, QA, and demos (toggle via `CONFIG.ENABLE_SIMULATION_UI`)
-- **Photo Enhancement**: GPS overlays, QR codes, and medium-sized image optimization
 - **Mobile Optimized**: Responsive design with touch-friendly controls and horizontal photo detail layouts
 - **Field Provenance**: Cryptographic PDF generation with SHA-256 verification
-- **Migration Tools**: Complete migration script to convert legacy segments to assets (`tools/migrate_segments_to_assets.py`)
+- **Schema & Examples**: Complete JSON schema documentation with examples for all asset types and field logs
+- **Migration Tools**: Complete migration scripts to convert legacy segments and blocks to assets
 - **Automated Testing**: Professional-grade Playwright test suite for end-to-end browser automation
+- **Code Quality**: Cleaned temporary files, test artifacts, and backup files for production-ready repository
+
+## Recent Development Updates (November 2025)
+
+### PDF Layout Enhancement (Latest)
+- **Fixed Critical Bugs**: Resolved both local and server PDF generation errors
+- **Missing Function Fix**: Added getWorkItem function to app.js for PDF compatibility
+- **API URL Correction**: Changed from 192.168.1.56:5000 to localhost:5000 for local development
+- **Progress Display Cleanup**: Removed misleading "5/1000 blocks" by eliminating hardcoded target_total defaults
+- **Compact Design**: Reduced font size to 9pt, decreased line spacing to 4pt for efficient PDF layout
+- **Photo Positioning**: Photos now positioned at top-right corner of each entry box (80×60px)
+- **Clean Progress Text**: Shows "15 blocks (no target set)" instead of misleading fractions when target_total is null
+- **Field Consolidation**: Combined multiple fields into single lines for space efficiency
+
+### Repository Cleanup & Organization
+- **Database Directory**: Cleaned all temporary SQL files, kept README.md
+- **Test Suite**: Removed generated artifacts (node_modules, playwright-report, test-results, PNG screenshots)
+- **Temporary Files**: Removed debug_tabs.html, test_tabs.html, test_simple.html, unregister_sw.js
+- **Backup Files**: Removed app_backup.js, app_clean.js, app_fixed_start.js, app_old.js
+- **Production Ready**: Repository now contains only essential code and documentation
+
+### Schema & Migration Infrastructure
+- **Asset Schema**: Complete JSON schema (`engine/schema/asset.schema.json`) defining universal asset structure
+- **Examples**: Concrete examples for road_section, building, flood_control assets and field logs
+- **Migration Tools**: Scripts to convert legacy segments and blocks to new asset architecture
+- **Testing Utilities**: Block parsing and migration validation tools
 
 ## Development Notes
 
 - The PWA works entirely offline without the API but simulation requires the Python server
+- **PDF Generation**: Both local (pdf_local.js) and server (provenance.py) PDF generation are fully functional
+- **Progress Handling**: Work items now support null target_total values with clean display formatting
+- **Photo Integration**: GPS coordinates properly converted to numbers for PDF positioning
+- **Asset Architecture**: New universal system supports any infrastructure type, not just roads
 - All data models follow the JSON schemas in `/engine/schema/` (see `asset.schema.json` for new architecture)
 - **Universal Asset System**: The system now uses Assets & Work Items instead of road-specific segments
 - **Work Item Matching**: Intelligent 3-step algorithm (item_code → work_type → auto-create) for seamless field entry
