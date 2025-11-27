@@ -34,10 +34,13 @@ class SyncClient {
             // 1. Sync Projects
             await this.syncProjects();
 
-            // 2. Sync Segments
-            await this.syncSegments();
+            // 2. Sync Assets
+            await this.syncAssets();
 
-            // 3. Sync Field Logs
+            // 3. Sync Work Items
+            await this.syncWorkItems();
+
+            // 4. Sync Field Logs
             await this.syncFieldLogs();
 
             // Update UI safely
@@ -47,10 +50,9 @@ class SyncClient {
                 lastSyncTimeEl.textContent = `Last synced: ${now.toLocaleTimeString()}`;
             }
 
-            // Refresh UI if needed (reload projects/logs from local storage which might have been updated)
-            // We need to expose loadProjects/loadFieldLogs globally or trigger event
+            // Refresh UI if needed (reload data from local storage which might have been updated)
             if (window.loadProjects) window.loadProjects();
-            if (window.loadSegments) window.loadSegments();
+            if (window.loadAssets) window.loadAssets();
             if (window.loadFieldLogs) window.loadFieldLogs();
 
         } catch (err) {
@@ -131,11 +133,28 @@ class SyncClient {
             return;
         }
 
-        // Prepare payload (remove local-only fields if any)
+        // Validate required fields and handle field mapping
+        const projectId = project.project_id;
+        const projectName = project.project_name || project.project_title || 'Untitled Project';
+
+        if (!projectId || !projectName) {
+            console.warn("Skipping invalid project (missing required fields):", project);
+            return;
+        }
+
+        // Prepare payload with field mapping for legacy data
         const payload = {
-            ...project,
+            project_id: projectId,
+            project_name: projectName,
+            contract_no: project.contract_no || project.contract_id || null,
+            location: project.location || null,
+            start_date: project.start_date || null,
+            end_date: project.end_date || null,
+            contractor: project.contractor || project.contractor_name || null,
+            engineer: project.engineer || null,
             owner_user_id: currentUser.id,
-            updated_at: new Date().toISOString()
+            updated_at: new Date().toISOString(),
+            created_at: project.created_at || new Date().toISOString()
         };
 
         const { error } = await supabase
@@ -288,6 +307,222 @@ class SyncClient {
         }
     }
 
+    async syncAssets() {
+        const localAssets = JSON.parse(localStorage.getItem('veritas_assets') || '[]');
+
+        // Check if assets table exists in Supabase
+        const { data: tableCheck, error: tableError } = await supabase
+            .from('assets')
+            .select('asset_id')
+            .limit(1);
+
+        if (tableError && tableError.message.includes('does not exist')) {
+            console.log('Assets table not found in Supabase. Skipping asset sync. Please run the database setup script.');
+            return;
+        }
+
+        if (tableError) throw tableError;
+
+        // Get remote assets
+        const { data: remoteAssets, error } = await supabase
+            .from('assets')
+            .select('*');
+
+        if (error) throw error;
+
+        let hasChanges = false;
+
+        // Merge Logic: Last-writer-wins based on updated_at
+        for (const local of localAssets) {
+            const remote = remoteAssets.find(r => r.asset_id === local.asset_id);
+
+            if (!remote) {
+                // New local asset -> Upload
+                await this.uploadAsset(local);
+            } else if (new Date(local.updated_at) > new Date(remote.updated_at)) {
+                // Local is newer -> Upload
+                await this.uploadAsset(local);
+            }
+        }
+
+        // Download remote assets that are newer or missing locally
+        for (const remote of remoteAssets) {
+            const local = localAssets.find(l => l.asset_id === remote.asset_id);
+
+            if (!local) {
+                // New remote asset -> Download
+                localAssets.push(remote);
+                hasChanges = true;
+            } else if (new Date(remote.updated_at) > new Date(local.updated_at)) {
+                // Remote is newer -> Download
+                const localIndex = localAssets.findIndex(l => l.asset_id === remote.asset_id);
+                localAssets[localIndex] = remote;
+                hasChanges = true;
+            }
+        }
+
+        if (hasChanges) {
+            localStorage.setItem('veritas_assets', JSON.stringify(localAssets));
+            console.log("Assets synced successfully");
+        }
+    }
+
+    async uploadAsset(asset) {
+        // Field mapping and validation
+        const assetId = asset.asset_id;
+        const projectId = asset.project_id || localStorage.getItem('veritas_active_project');
+        const assetName = asset.asset_name || asset.name || 'Unnamed Asset';
+        const assetType = asset.asset_type;
+
+        if (!assetId || !projectId || !assetName || !assetType) {
+            console.warn("Skipping invalid asset (missing required fields):", asset);
+            return;
+        }
+
+        // Prepare payload with field mapping
+        const payload = {
+            asset_id: assetId,
+            project_id: projectId,
+            asset_name: assetName,
+            asset_type: assetType,
+            description: asset.description || null,
+            location: asset.location || null,
+            chainage_start: asset.chainage_start || null,
+            chainage_end: asset.chainage_end || null,
+            length_m: asset.length_m || null,
+            width_m: asset.width_m || null,
+            height_m: asset.height_m || null,
+            floor_area_m2: asset.floor_area_m2 || null,
+            stationing: asset.stationing || null,
+            dimensions: asset.dimensions || null,
+            work_items: asset.work_items || [],
+            owner_user_id: currentUser.id,
+            updated_at: new Date().toISOString(),
+            created_at: asset.created_at || new Date().toISOString()
+        };
+
+        const { error } = await supabase
+            .from('assets')
+            .upsert(payload, { onConflict: 'asset_id' });
+
+        if (error) console.error("Error uploading asset:", error);
+    }
+
+    async syncWorkItems() {
+        const localWorkItems = JSON.parse(localStorage.getItem('veritas_work_items') || '[]');
+
+        // Check if work_items table exists in Supabase
+        const { data: tableCheck, error: tableError } = await supabase
+            .from('work_items')
+            .select('work_item_id')
+            .limit(1);
+
+        if (tableError && tableError.message.includes('does not exist')) {
+            console.log('Work Items table not found in Supabase. Skipping work items sync. Please run the database setup script.');
+            return;
+        }
+
+        if (tableError) throw tableError;
+
+        // Get remote work items
+        const { data: remoteWorkItems, error } = await supabase
+            .from('work_items')
+            .select('*');
+
+        if (error) throw error;
+
+        let hasChanges = false;
+
+        // Merge Logic: Last-writer-wins based on updated_at
+        for (const local of localWorkItems) {
+            const remote = remoteWorkItems.find(r => r.work_item_id === local.work_item_id);
+
+            if (!remote) {
+                // New local work item -> Upload
+                await this.uploadWorkItem(local);
+            } else if (new Date(local.updated_at) > new Date(remote.updated_at)) {
+                // Local is newer -> Upload
+                await this.uploadWorkItem(local);
+            }
+        }
+
+        // Download remote work items that are newer or missing locally
+        for (const remote of remoteWorkItems) {
+            const local = localWorkItems.find(l => l.work_item_id === remote.work_item_id);
+
+            if (!local) {
+                // New remote work item -> Download
+                localWorkItems.push(remote);
+                hasChanges = true;
+            } else if (new Date(remote.updated_at) > new Date(local.updated_at)) {
+                // Remote is newer -> Download
+                const localIndex = localWorkItems.findIndex(l => l.work_item_id === remote.work_item_id);
+                localWorkItems[localIndex] = remote;
+                hasChanges = true;
+            }
+        }
+
+        if (hasChanges) {
+            localStorage.setItem('veritas_work_items', JSON.stringify(localWorkItems));
+            console.log("Work items synced successfully");
+        }
+    }
+
+    async uploadWorkItem(workItem) {
+        // Field mapping and validation
+        const workItemId = workItem.work_item_id;
+        let projectId = workItem.project_id || localStorage.getItem('veritas_active_project');
+        const assetId = workItem.asset_id;
+        const workType = workItem.work_type;
+        const unit = workItem.unit;
+
+        // If no project_id, try to get it from the asset
+        if (!projectId && assetId) {
+            const localAssets = JSON.parse(localStorage.getItem('veritas_assets') || '[]');
+            const asset = localAssets.find(a => a.asset_id === assetId);
+            if (asset && asset.project_id) {
+                projectId = asset.project_id;
+            }
+        }
+
+        // Last resort: get from first available project
+        if (!projectId) {
+            const localProjects = JSON.parse(localStorage.getItem('veritas_projects') || '[]');
+            if (localProjects.length > 0) {
+                projectId = localProjects[0].project_id;
+            }
+        }
+
+        if (!workItemId || !projectId || !assetId || !workType || !unit) {
+            console.warn("Skipping invalid work item (missing required fields):", workItem);
+            return;
+        }
+
+        const payload = {
+            work_item_id: workItemId,
+            project_id: projectId,
+            asset_id: assetId,
+            work_type: workType,
+            item_code: workItem.item_code || null,
+            unit: unit,
+            target_total: workItem.target_total || 0,
+            cumulative: workItem.cumulative || 0,
+            remaining: workItem.remaining || 0,
+            status: workItem.status || 'pending',
+            priority: workItem.priority || 'medium',
+            notes: workItem.notes || null,
+            owner_user_id: currentUser.id,
+            updated_at: new Date().toISOString(),
+            created_at: workItem.created_at || new Date().toISOString()
+        };
+
+        const { error } = await supabase
+            .from('work_items')
+            .upsert(payload, { onConflict: 'work_item_id' });
+
+        if (error) console.error("Error uploading work item:", error);
+    }
+
     async syncFieldLogs() {
         const localLogs = JSON.parse(localStorage.getItem('veritas_field_logs') || '[]');
 
@@ -370,18 +605,21 @@ class SyncClient {
         }
 
         // 2. Download remaining missing remote logs (excluding those already processed)
-        for (const remote of remoteLogs) {
-            const local = localLogs.find(l => l.entry_id === remote.entry_id);
-            if (!local) {
-                // Only download if this log wasn't already processed above
-                if (!processedLogIds.includes(remote.entry_id)) {
-                    // Check if segment exists locally, create placeholder if missing
-                    if (remote.segment_id) {
-                        await this.ensureSegmentExists(remote.segment_id);
-                    }
+        // Skip this section if user chose to delete from cloud
+        if (!shouldDeleteRemote) {
+            for (const remote of remoteLogs) {
+                const local = localLogs.find(l => l.entry_id === remote.entry_id);
+                if (!local) {
+                    // Only download if this log wasn't already processed above
+                    if (!processedLogIds.includes(remote.entry_id)) {
+                        // Check if segment exists locally, create placeholder if missing
+                        if (remote.segment_id) {
+                            await this.ensureSegmentExists(remote.segment_id);
+                        }
 
-                    localLogs.push(remote);
-                    hasChanges = true;
+                        localLogs.push(remote);
+                        hasChanges = true;
+                    }
                 }
             }
         }
@@ -404,10 +642,62 @@ class SyncClient {
             return;
         }
 
+        // Field mapping and validation
+        const entryId = log.entry_id;
+        let projectId = log.project_id || localStorage.getItem('veritas_active_project');
+        const assetId = log.asset_id;
+        const date = log.date;
+        const workType = log.work_type;
+
+        // If no project_id, try to get it from the asset
+        if (!projectId && assetId) {
+            const localAssets = JSON.parse(localStorage.getItem('veritas_assets') || '[]');
+            const asset = localAssets.find(a => a.asset_id === assetId);
+            if (asset && asset.project_id) {
+                projectId = asset.project_id;
+            }
+        }
+
+        // Last resort: get from first available project
+        if (!projectId) {
+            const localProjects = JSON.parse(localStorage.getItem('veritas_projects') || '[]');
+            if (localProjects.length > 0) {
+                projectId = localProjects[0].project_id;
+            }
+        }
+
+        if (!entryId || !projectId || !assetId || !date || !workType) {
+            console.warn("Skipping invalid field log (missing required fields):", log);
+            return;
+        }
+
+        // Parse quantity to extract numeric value (handle "5 blocks" -> 5)
+        const parseQuantity = (quantity) => {
+            if (!quantity) return 0;
+            if (typeof quantity === 'number') return quantity;
+            if (typeof quantity === 'string') {
+                const match = quantity.match(/[\d.]+/);
+                return match ? parseFloat(match[0]) : 0;
+            }
+            return 0;
+        };
+
         const payload = {
-            ...log,
+            entry_id: entryId,
+            project_id: projectId,
+            asset_id: assetId,
+            work_item_id: log.work_item_id || null,
+            date: date,
+            work_type: workType,
+            item_code: log.item_code || null,
+            quantity_today: parseQuantity(log.quantity_today),
+            crew_size: parseInt(log.crew_size) || 1,
+            weather: log.weather || null,
+            notes: log.notes || null,
+            photo_base64: log.photo_base64 || null,
             owner_user_id: currentUser.id,
-            updated_at: new Date().toISOString()
+            updated_at: new Date().toISOString(),
+            created_at: log.created_at || new Date().toISOString()
         };
 
         const { error } = await supabase

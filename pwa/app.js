@@ -1,10 +1,12 @@
-const API_URL = 'http://192.168.1.56:5000';
+const API_URL = 'http://localhost:5000';
 
 let currentLogs = [];
 let projects = [];
 let activeProject = null;
 let fieldLogs = [];
-let segments = [];
+let segments = []; // Kept for backwards compatibility
+let assets = [];      // New universal asset system
+let workItems = [];    // Work items within assets
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
@@ -19,6 +21,13 @@ document.addEventListener('DOMContentLoaded', () => {
     window.loadProjects();
     window.loadSegments();
     window.loadFieldLogs();
+    window.loadAssets();
+    window.loadWorkItems();
+
+    // Populate Field Entry dropdowns after data is loaded
+    setTimeout(() => {
+        populateAssetSelect();
+    }, 100);
     updateProjectSelect();
     updateSegmentSelect();
 
@@ -41,6 +50,21 @@ document.addEventListener('DOMContentLoaded', () => {
         console.log('📶 Gone offline');
         showOfflineIndicator();
     });
+
+    // Initialize the default tab (Assets)
+    setTimeout(() => {
+        const assetsTab = document.getElementById('assets');
+        if (assetsTab) {
+            assetsTab.style.display = 'block';
+            renderAssets();
+            populateAssetSelect();
+        }
+        // Set the Assets button as active
+        const assetsBtn = document.querySelector('button[onclick="switchTab(\'assets\')"]');
+        if (assetsBtn) {
+            assetsBtn.classList.add('active');
+        }
+    }, 200);
 });
 
 function showOfflineIndicator() {
@@ -194,6 +218,263 @@ function calculateRemainingBlocks(segment) {
     return Math.max(0, totalBlocks - completedBlocks);
 }
 
+// ===============================
+// ASSET MANAGEMENT FUNCTIONS
+// ===============================
+
+// Save assets to LocalStorage
+function saveAssets() {
+    localStorage.setItem('veritas_assets', JSON.stringify(assets));
+    populateAssetSelect();
+}
+
+// Save work items to LocalStorage
+function saveWorkItems() {
+    localStorage.setItem('veritas_work_items', JSON.stringify(workItems));
+}
+
+// Load assets from LocalStorage
+window.loadAssets = function () {
+    try {
+        const savedAssets = localStorage.getItem('veritas_assets');
+        if (savedAssets) {
+            assets = JSON.parse(savedAssets);
+        } else {
+            assets = [];
+        }
+        renderAssets();
+        populateAssetSelect();
+    } catch (error) {
+        console.error('Error loading assets:', error);
+        assets = [];
+        renderAssets();
+        populateAssetSelect();
+    }
+};
+
+// Load work items from LocalStorage
+window.loadWorkItems = function () {
+    try {
+        const savedWorkItems = localStorage.getItem('veritas_work_items');
+        if (savedWorkItems) {
+            workItems = JSON.parse(savedWorkItems);
+        } else {
+            workItems = [];
+        }
+    } catch (error) {
+        console.error('Error loading work items:', error);
+        workItems = [];
+    }
+};
+
+// Populate asset dropdown for Field Entry form
+function populateAssetSelect() {
+    const assetSelect = document.getElementById('assetSelect');
+    if (!assetSelect) return;
+
+    assetSelect.innerHTML = '<option value="">-- Select Asset --</option>';
+
+    if (assets.length === 0) {
+        assetSelect.innerHTML = '<option value="">-- No Assets Available --</option>';
+        return;
+    }
+
+    // Sort assets by name for better UX
+    const sortedAssets = [...assets].sort((a, b) => (a.name || a.asset_id).localeCompare(b.name || b.asset_id));
+
+    sortedAssets.forEach(asset => {
+        const option = document.createElement('option');
+        option.value = asset.asset_id;
+        option.textContent = `${asset.name || asset.asset_id} (${formatAssetType(asset.asset_type)})`;
+        assetSelect.appendChild(option);
+    });
+}
+
+// Create or update an asset
+window.saveAsset = function (assetData) {
+    const existingIndex = assets.findIndex(a => a.asset_id === assetData.asset_id);
+
+    // Add timestamps
+    const now = new Date().toISOString();
+    const newAsset = {
+        ...assetData,
+        updated_at: now,
+        created_at: assetData.created_at || now
+    };
+
+    if (existingIndex >= 0) {
+        // Update existing asset
+        assets[existingIndex] = { ...assets[existingIndex], ...newAsset };
+        console.log('Updated asset:', assetData.asset_id);
+    } else {
+        // Add new asset
+        assets.push(newAsset);
+        console.log('Created new asset:', assetData.asset_id);
+    }
+
+    saveAssets();
+
+    // Also save work items if provided
+    if (assetData.work_items && assetData.work_items.length > 0) {
+        assetData.work_items.forEach(workItem => {
+            const existingWorkIndex = workItems.findIndex(wi => wi.work_item_id === workItem.work_item_id);
+
+            if (existingWorkIndex >= 0) {
+                workItems[existingWorkIndex] = { ...workItems[existingWorkIndex], ...workItem };
+            } else {
+                workItems.push(workItem);
+            }
+        });
+        saveWorkItems();
+    }
+
+    // Refresh UI components
+    renderAssets();
+    populateAssetSelect();
+};
+
+// View asset details
+window.viewAsset = function(assetId) {
+    const asset = assets.find(a => a.asset_id === assetId);
+    if (!asset) return;
+
+    alert(`Asset Details:\n\nID: ${asset.asset_id}\nName: ${asset.name}\nType: ${formatAssetType(asset.asset_type)}\nWork Items: ${asset.work_items ? asset.work_items.length : 0}`);
+}
+
+// Edit asset
+window.editAsset = function(assetId) {
+    const asset = assets.find(a => a.asset_id === assetId);
+    if (!asset) return;
+
+    // Implementation for edit modal would go here
+    alert(`Edit asset: ${asset.name}\n\n(Edit modal to be implemented)`);
+}
+
+// Delete an asset
+window.deleteAsset = function (assetId) {
+    const index = assets.findIndex(a => a.asset_id === assetId);
+    if (index >= 0) {
+        assets.splice(index, 1);
+
+        // Also delete associated work items
+        const workItemsToDelete = workItems.filter(wi => wi.asset_id === assetId);
+        workItemsToDelete.forEach(wi => {
+            const wiIndex = workItems.findIndex(w => w.work_item_id === wi.work_item_id);
+            if (wiIndex >= 0) {
+                workItems.splice(wiIndex, 1);
+            }
+        });
+
+        saveAssets();
+        saveWorkItems();
+        renderAssets();
+        populateAssetSelect();
+        console.log('Deleted asset:', assetId);
+    }
+};
+
+// Get asset by ID
+function getAsset(assetId) {
+    return assets.find(a => a.asset_id === assetId);
+}
+
+// Get work items for an asset
+function getWorkItemsForAsset(assetId) {
+    return workItems.filter(wi => wi.asset_id === assetId);
+}
+
+// Get a single work item by ID
+function getWorkItem(workItemId) {
+    return workItems.find(wi => wi.work_item_id === workItemId);
+}
+
+// Generate unique asset ID following DPWH standard format: ASSET-XX-NNN
+function generateAssetId() {
+    // Get all existing assets to determine the next sequence number for each type
+    const assetTypePrefixes = {
+        'road_section': 'ASSET-RD',
+        'building': 'ASSET-BLD',
+        'flood_control': 'ASSET-FC',
+        'bridge': 'ASSET-BR',
+        'culvert': 'ASSET-CU',
+        'utility': 'ASSET-UT',
+        'landscaping': 'ASSET-LS',
+        'other': 'ASSET-OT'
+    };
+
+    // For now, generate a generic road section asset ID (asset type will be set when asset is created)
+    const prefix = 'ASSET-RD';
+
+    // Get existing assets with this prefix to determine next sequence number
+    const existingAssets = assets.filter(asset => asset.asset_id && asset.asset_id.startsWith(prefix));
+
+    // Determine next sequence number
+    let sequenceNumber = 1;
+    if (existingAssets.length > 0) {
+        // Extract the highest existing sequence number
+        const existingNumbers = existingAssets.map(asset => {
+            const parts = asset.asset_id.split('-');
+            return parseInt(parts[2]) || 0;
+        });
+        sequenceNumber = Math.max(...existingNumbers) + 1;
+    }
+
+    // Format with zero-padding (3 digits)
+    const paddedSequence = String(sequenceNumber).padStart(3, '0');
+
+    return `${prefix}-${paddedSequence}`;
+}
+
+// Generate unique asset ID for specific asset type following DPWH standard
+function generateAssetIdForType(assetType) {
+    const assetTypePrefixes = {
+        'road_section': 'ASSET-RD',
+        'building': 'ASSET-BLD',
+        'flood_control': 'ASSET-FC',
+        'bridge': 'ASSET-BR',
+        'culvert': 'ASSET-CU',
+        'utility': 'ASSET-UT',
+        'landscaping': 'ASSET-LS',
+        'other': 'ASSET-OT'
+    };
+
+    const prefix = assetTypePrefixes[assetType] || 'ASSET-OT';
+
+    // Get existing assets with this prefix to determine next sequence number
+    const existingAssets = assets.filter(asset => asset.asset_id && asset.asset_id.startsWith(prefix));
+
+    // Determine next sequence number
+    let sequenceNumber = 1;
+    if (existingAssets.length > 0) {
+        // Extract the highest existing sequence number
+        const existingNumbers = existingAssets.map(asset => {
+            const parts = asset.asset_id.split('-');
+            return parseInt(parts[2]) || 0;
+        });
+        sequenceNumber = Math.max(...existingNumbers) + 1;
+    }
+
+    // Format with zero-padding (3 digits)
+    const paddedSequence = String(sequenceNumber).padStart(3, '0');
+
+    return `${prefix}-${paddedSequence}`;
+}
+
+// Generate unique work item ID
+function generateWorkItemId() {
+    const now = Date.now();
+    const random = Math.floor(Math.random() * 100);
+    const workTypes = ['PCC', 'BASE', 'EXC', 'STR', 'FND', 'DRN', 'FLOOD', 'UTIL'];
+    const workType = workTypes[Math.floor(Math.random() * workTypes.length)];
+    return `WI-${workType}-${random}`;
+}
+
+// --- Cloud Sync Functions for Assets ---
+function syncAssetToCloud(assetData) {
+    // Implementation will be added to sync_client.js
+    console.log('Syncing asset to cloud:', assetData.asset_id);
+}
+
 // --- Cloud Sync Functions for Segments ---
 
 // Sync segment to cloud (if online and logged in)
@@ -286,6 +567,417 @@ window.renderSegmentsTable = function () {
         `;
         tbody.appendChild(row);
     });
+};
+
+// Render assets table
+window.renderAssets = function () {
+    const tbody = document.getElementById('assetsTableBody');
+    const noAssetsMsg = document.getElementById('noAssetsMessage');
+
+    if (!tbody) return; // Not on assets tab
+
+    if (assets.length === 0) {
+        tbody.innerHTML = '';
+        noAssetsMsg.style.display = 'block';
+        return;
+    }
+
+    noAssetsMsg.style.display = 'none';
+    tbody.innerHTML = '';
+
+    // Sort assets by type and name
+    const sortedAssets = [...assets].sort((a, b) => {
+        if (a.asset_type !== b.asset_type) {
+            return a.asset_type.localeCompare(b.asset_type);
+        }
+        return a.name.localeCompare(b.name);
+    });
+
+    sortedAssets.forEach(asset => {
+        const assetWorkItems = getWorkItemsForAsset(asset.asset_id);
+        const totalProgress = calculateAssetProgress(asset);
+        const locationInfo = getAssetLocationInfo(asset);
+
+        const row = document.createElement('tr');
+        row.innerHTML = `
+            <td><strong>${asset.asset_id}</strong></td>
+            <td>${asset.name}</td>
+            <td>${formatAssetType(asset.asset_type)}</td>
+            <td>${locationInfo}</td>
+            <td>${assetWorkItems.length} items</td>
+            <td>${totalProgress}</td>
+            <td>
+                <div style="display: flex; gap: 4px;">
+                    <button onclick="viewAsset('${asset.asset_id}')" style="background: none; border: none; cursor: pointer; font-size: 1.2em;" title="View Details">👁️</button>
+                    <button onclick="editAsset('${asset.asset_id}')" style="background: none; border: none; cursor: pointer; font-size: 1.2em;" title="Edit">✏️</button>
+                    <button onclick="deleteAsset('${asset.asset_id}')" style="background: none; border: none; cursor: pointer; font-size: 1.2em; color: #ef4444;" title="Delete">🗑️</button>
+                </div>
+            </td>
+        `;
+        tbody.appendChild(row);
+    });
+};
+
+// Format asset type for display
+function formatAssetType(assetType) {
+    const typeMap = {
+        'road_section': 'Road Section',
+        'building': 'Building',
+        'flood_control': 'Flood Control',
+        'bridge': 'Bridge',
+        'culvert': 'Culvert',
+        'utility': 'Utility',
+        'landscaping': 'Landscaping',
+        'other': 'Other'
+    };
+    return typeMap[assetType] || assetType;
+}
+
+// Get asset location information
+function getAssetLocationInfo(asset) {
+    if (asset.chainage_start_m !== undefined && asset.chainage_end_m !== undefined) {
+        const startChainage = formatChainage(asset.chainage_start_m);
+        const endChainage = formatChainage(asset.chainage_end_m);
+        return `${startChainage} - ${endChainage}`;
+    }
+    if (asset.length_m) {
+        return `${asset.length_m}m`;
+    }
+    if (asset.width_m) {
+        return `${asset.width_m}m × ${asset.length_m || 0}m`;
+    }
+    return '-';
+}
+
+// Calculate overall progress for an asset
+function calculateAssetProgress(asset) {
+    const assetWorkItems = getWorkItemsForAsset(asset.asset_id);
+    if (assetWorkItems.length === 0) return 'No work items';
+
+    let totalProgress = 0;
+    let completedItems = 0;
+    let itemsWithTargets = 0;
+
+    assetWorkItems.forEach(workItem => {
+        if (workItem.target_total && workItem.target_total > 0) {
+            const progress = (workItem.cumulative / workItem.target_total) * 100;
+            totalProgress += progress;
+            if (progress >= 100) completedItems++;
+            itemsWithTargets++;
+        }
+    });
+
+    if (itemsWithTargets === 0) {
+        // No targets set - show cumulative work instead
+        const totalCumulative = assetWorkItems.reduce((sum, wi) => sum + (wi.cumulative || 0), 0);
+        return `${totalCumulative} cumulative units (no targets set)`;
+    }
+
+    const avgProgress = totalProgress / itemsWithTargets;
+    return `${avgProgress.toFixed(1)}% (${completedItems}/${itemsWithTargets} complete)`;
+}
+
+// ===============================
+// ASSET MODAL FUNCTIONS
+// ===============================
+
+// Open asset creation modal
+window.openAssetModal = function (assetData = null) {
+    const modal = document.getElementById('assetModal');
+    const form = document.getElementById('assetForm');
+
+    // Reset form
+    form.reset();
+    document.getElementById('workItemsList').innerHTML = '';
+    currentWorkItems = [];
+
+    // Hide all asset type specific fields
+    document.getElementById('roadSectionFields').style.display = 'none';
+    document.getElementById('buildingFields').style.display = 'none';
+    document.getElementById('floodControlFields').style.display = 'none';
+
+    // If editing existing asset, populate form
+    if (assetData) {
+        document.getElementById('assetModalTitle').textContent = 'Edit Asset';
+        document.getElementById('assetName').value = assetData.name || '';
+        document.getElementById('assetDescription').value = assetData.description || '';
+        document.getElementById('assetType').value = assetData.asset_type || '';
+
+        // Show appropriate fields based on asset type
+        showAssetTypeFields(assetData.asset_type);
+
+        // Load existing work items
+        if (assetData.work_items && assetData.work_items.length > 0) {
+            currentWorkItems = [...assetData.work_items];
+            renderWorkItems();
+        }
+    } else {
+        document.getElementById('assetModalTitle').textContent = 'Create New Asset';
+        // Generate a new asset ID (will be updated when asset type is selected)
+        const assetTypeSelect = document.getElementById('assetType');
+        const initialAssetType = assetTypeSelect?.value || 'road_section';
+        const newAssetId = generateAssetIdForType(initialAssetType);
+        document.getElementById('assetForm').dataset.assetId = newAssetId;
+    }
+
+    modal.style.display = 'flex';
+
+    // Add event listener to update asset ID when asset type changes
+    const assetTypeSelect = document.getElementById('assetType');
+    if (assetTypeSelect) {
+        assetTypeSelect.addEventListener('change', (e) => {
+            const newAssetType = e.target.value;
+            const newAssetId = generateAssetIdForType(newAssetType);
+            document.getElementById('assetForm').dataset.assetId = newAssetId;
+        });
+    }
+};
+
+// Close asset modal
+window.closeAssetModal = function () {
+    const modal = document.getElementById('assetModal');
+    modal.style.display = 'none';
+};
+
+// Show/hide fields based on asset type
+window.showAssetTypeFields = function (assetType) {
+    // Hide all fields first
+    document.getElementById('roadSectionFields').style.display = 'none';
+    document.getElementById('buildingFields').style.display = 'none';
+    document.getElementById('floodControlFields').style.display = 'none';
+
+    // Show relevant fields
+    switch (assetType) {
+        case 'road_section':
+            document.getElementById('roadSectionFields').style.display = 'block';
+            break;
+        case 'building':
+            document.getElementById('buildingFields').style.display = 'block';
+            break;
+        case 'flood_control':
+            document.getElementById('floodControlFields').style.display = 'block';
+            break;
+    }
+};
+
+// Handle asset type change
+document.addEventListener('DOMContentLoaded', () => {
+    const assetTypeSelect = document.getElementById('assetType');
+    if (assetTypeSelect) {
+        assetTypeSelect.addEventListener('change', (e) => {
+            showAssetTypeFields(e.target.value);
+        });
+    }
+
+    // New Asset button click
+    const newAssetBtn = document.getElementById('newAssetBtn');
+    if (newAssetBtn) {
+        newAssetBtn.addEventListener('click', () => {
+            openAssetModal();
+        });
+    }
+
+    // Asset form submission
+    const assetForm = document.getElementById('assetForm');
+    if (assetForm) {
+        assetForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            handleAssetFormSubmit();
+        });
+    }
+
+    // Cancel Asset button
+    const cancelAssetBtn = document.getElementById('cancelAssetBtn');
+    if (cancelAssetBtn) {
+        cancelAssetBtn.addEventListener('click', () => {
+            closeAssetModal();
+        });
+    }
+
+    // Add Work Item button
+    const addWorkItemBtn = document.getElementById('addWorkItemBtn');
+    if (addWorkItemBtn) {
+        addWorkItemBtn.addEventListener('click', addWorkItem);
+    }
+});
+
+  // Handle asset form submission
+function handleAssetFormSubmit() {
+    const form = document.getElementById('assetForm');
+    const formData = new FormData(form);
+
+    // Get form values
+    const assetType = formData.get('assetType');
+    const assetName = formData.get('assetName');
+    const assetDescription = formData.get('assetDescription');
+    const assetId = document.getElementById('assetForm').dataset.assetId || generateAssetIdForType(assetType);
+
+    // Validate required fields
+    if (!assetType || !assetName) {
+        alert('Please fill in all required fields (Asset Type and Asset Name).');
+        return;
+    }
+
+    // Collect work items
+    const workItems = [];
+    const workItemRows = document.querySelectorAll('.work-item-row');
+    workItemRows.forEach((row, index) => {
+        const workType = row.querySelector('.work-item-type')?.value;
+        const itemCode = row.querySelector('.work-item-code')?.value;
+        const unit = row.querySelector('.work-item-unit')?.value;
+        const targetTotal = parseFloat(row.querySelector('.work-item-target')?.value) || 0;
+
+        if (workType && unit) {
+            workItems.push({
+                work_item_id: generateWorkItemId(),
+                work_type: workType,
+                item_code: itemCode || null,
+                unit: unit,
+                target_total: targetTotal,
+                cumulative: 0,
+                remaining: target_total,
+                status: 'pending',
+                priority: 'medium',
+                notes: ''
+            });
+        }
+    });
+
+    // Create asset object
+    const assetData = {
+        asset_id: assetId,
+        name: assetName,
+        description: assetDescription,
+        asset_type: assetType,
+        work_items: workItems,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        project_id: activeProject ? activeProject.project_id : null
+    };
+
+    // Add type-specific fields
+    if (assetType === 'road_section') {
+        const chainageStart = document.getElementById('chainageStart')?.value;
+        const chainageEnd = document.getElementById('chainageEnd')?.value;
+        const roadSide = document.getElementById('roadSide')?.value;
+
+        if (chainageStart) {
+            assetData.chainage_start_m = parseChainage(chainageStart);
+        }
+        if (chainageEnd) {
+            assetData.chainage_end_m = parseChainage(chainageEnd);
+        }
+        if (roadSide) {
+            assetData.side = roadSide;
+        }
+    } else if (assetType === 'building') {
+        const buildingLength = parseFloat(document.getElementById('buildingLength')?.value) || 0;
+        const buildingWidth = parseFloat(document.getElementById('buildingWidth')?.value) || 0;
+
+        if (buildingLength > 0) {
+            assetData.length_m = buildingLength;
+        }
+        if (buildingWidth > 0) {
+            assetData.width_m = buildingWidth;
+        }
+    } else if (assetType === 'flood_control') {
+        const floodChainageStart = document.getElementById('floodChainageStart')?.value;
+        const floodChainageEnd = document.getElementById('floodChainageEnd')?.value;
+        const floodSide = document.getElementById('floodSide')?.value;
+
+        if (floodChainageStart) {
+            assetData.chainage_start_m = parseChainage(floodChainageStart);
+        }
+        if (floodChainageEnd) {
+            assetData.chainage_end_m = parseChainage(floodChainageEnd);
+        }
+        if (floodSide) {
+            assetData.side = floodSide.replace(' Bank', '');
+        }
+    }
+
+    // Save the asset
+    saveAsset(assetData);
+
+    // Close modal and reset form
+    closeAssetModal();
+
+    // Refresh assets display
+    renderAssets();
+
+    console.log('Asset saved:', assetData.asset_id);
+}
+
+// Parse chainage string to meters
+function parseChainage(chainageStr) {
+    try {
+        if (!chainageStr) return 0;
+
+        // Handle formats like "0+000", "5+200", "10+050"
+        if (chainageStr.includes('+')) {
+            const [station, offset] = chainageStr.split('+');
+            return parseInt(station) * 1000 + parseInt(offset.padStart(3, '0'));
+        }
+
+        // Simple numeric fallback
+        return parseFloat(chainageStr) || 0;
+    } catch (error) {
+        return 0;
+    }
+}
+
+// Format meters back to chainage display format (e.g., 1000 -> "1+000")
+function formatChainage(meters) {
+    if (meters === undefined || meters === null) return null;
+
+    const totalMeters = Math.round(meters);
+    const station = Math.floor(totalMeters / 1000);
+    const offset = totalMeters % 1000;
+
+    return `${station}+${String(offset).padStart(3, '0')}`;
+}
+
+// Add work item to form
+window.addWorkItem = function () {
+    const workItemHtml = `
+        <div class="work-item-row" style="border: 1px solid #e5e7eb; padding: 10px; margin-bottom: 10px; border-radius: 4px;">
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Work Type *</label>
+                    <input type="text" class="work-item-type" placeholder="e.g., PCCP, Foundation, Excavation" required>
+                </div>
+                <div class="form-group">
+                    <label>Item Code</label>
+                    <input type="text" class="work-item-code" placeholder="e.g., 311, 208" maxlength="20">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Unit *</label>
+                    <select class="work-item-unit" required>
+                        <option value="">-- Select Unit --</option>
+                        <option value="blocks">Blocks</option>
+                        <option value="m">Meters</option>
+                        <option value="lm">Linear Meters</option>
+                        <option value="m2">Square Meters</option>
+                        <option value="m3">Cubic Meters</option>
+                        <option value="pcs">Pieces</option>
+                        <option value="kg">Kilograms</option>
+                        <option value="tons">Tons</option>
+                        <option value="custom">Custom</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Target Total</label>
+                    <input type="number" class="work-item-target" step="0.01" placeholder="0">
+                </div>
+            </div>
+            <button type="button" onclick="this.parentElement.parentElement.remove()" style="background: #ef4444; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer;">Remove</button>
+        </div>
+    `;
+
+    const workItemsList = document.getElementById('workItemsList');
+    workItemsList.insertAdjacentHTML('beforeend', workItemHtml);
 };
 
 // Edit segment
@@ -568,6 +1260,8 @@ function clearAllData() {
 
 This action will:
 • Remove all projects from local storage
+• Remove all assets from local storage
+• Remove all work items from local storage
 • Remove all field logs from local storage
 • Clear all photos from local storage
 • NOT affect cloud data (if synced)
@@ -587,24 +1281,126 @@ Are you absolutely sure you want to proceed?
 
     // Clear all local storage
     localStorage.removeItem('veritas_projects');
+    localStorage.removeItem('veritas_assets');
+    localStorage.removeItem('veritas_work_items');
     localStorage.removeItem('veritas_segments');
     localStorage.removeItem('veritas_field_logs');
     localStorage.removeItem('veritas_active_project');
 
     // Reset in-memory variables
     projects = [];
+    assets = [];
+    workItems = [];
     fieldLogs = [];
     segments = [];
     activeProject = null;
 
     // Refresh the UI
     window.loadProjects();
+    window.loadAssets();
+    window.loadWorkItems();
     window.loadSegments();
     window.loadFieldLogs();
     updateProjectSelect();
+    populateAssetSelect();
     updateSegmentSelect();
 
-    alert('✅ All local data has been cleared!\n\nStorage is now empty. You can:\n• Import previously exported data\n• Create new projects\n• Sync from cloud if logged in');
+    // Clear project selection UI
+    document.getElementById('projectSelect').value = '';
+    document.getElementById('activeProjectDisplay').style.display = 'none';
+    activeProject = null;
+
+    alert('✅ All local data has been cleared!\n\nStorage is now empty. You can:\n• Import previously exported data\n• Create new projects\n• "Clear Cloud Data" to remove cloud data\n• Sync from cloud if logged in');
+}
+
+async function clearAllCloudData() {
+    if (!currentUser) {
+        alert('❌ You must be logged in to clear cloud data.');
+        return;
+    }
+
+    const message = `
+🔥 CRITICAL: This will PERMANENTLY delete ALL cloud data!
+
+This action will:
+• Delete ALL projects from Supabase cloud
+• Delete ALL assets from Supabase cloud
+• Delete ALL work items from Supabase cloud
+• Delete ALL field logs from Supabase cloud
+• Delete ALL segments from Supabase cloud
+• This CANNOT be undone!
+• This affects ALL users!
+
+⚠️  This is a PERMANENT, IRREVERSIBLE operation!
+
+Are you absolutely sure you want to proceed?
+    `.trim();
+
+    if (!confirm(message)) {
+        return;
+    }
+
+    if (!confirm('FINAL CRITICAL WARNING: This will delete EVERYTHING from the cloud forever! Type "DELETE" to confirm.')) {
+        const confirmation = prompt('Type "DELETE" to confirm permanent cloud data deletion:');
+        if (confirmation !== 'DELETE') {
+            alert('❌ Operation cancelled. Confirmation did not match "DELETE"');
+            return;
+        }
+    }
+
+    try {
+        const deletedItems = [];
+
+        // Delete all field logs
+        const { error: logsError } = await supabase
+            .from('field_logs')
+            .delete()
+            .neq('entry_id', 'impossible-value'); // Delete all records
+
+        if (!logsError) deletedItems.push('Field logs');
+
+        // Delete all work items
+        const { error: workItemsError } = await supabase
+            .from('work_items')
+            .delete()
+            .neq('work_item_id', 'impossible-value');
+
+        if (!workItemsError) deletedItems.push('Work items');
+
+        // Delete all assets
+        const { error: assetsError } = await supabase
+            .from('assets')
+            .delete()
+            .neq('asset_id', 'impossible-value');
+
+        if (!assetsError) deletedItems.push('Assets');
+
+        // Delete all projects
+        const { error: projectsError } = await supabase
+            .from('projects')
+            .delete()
+            .neq('project_id', 'impossible-value');
+
+        if (!projectsError) deletedItems.push('Projects');
+
+        // Delete all segments
+        const { error: segmentsError } = await supabase
+            .from('segments')
+            .delete()
+            .neq('segment_id', 'impossible-value');
+
+        if (!segmentsError) deletedItems.push('Segments');
+
+        if (deletedItems.length > 0) {
+            alert(`✅ Cloud data cleared successfully!\n\nDeleted: ${deletedItems.join(', ')}\n\nThe cloud is now completely empty.`);
+        } else {
+            alert('⚠️ No data was deleted or there were errors.');
+        }
+
+    } catch (error) {
+        console.error('Error clearing cloud data:', error);
+        alert('❌ Error clearing cloud data: ' + error.message);
+    }
 }
 
 // --- Export / Import ---
@@ -614,21 +1410,26 @@ document.getElementById('importBtn').addEventListener('click', () => document.ge
 document.getElementById('importFile').addEventListener('change', importData);
 document.getElementById('storageBtn').addEventListener('click', showStorageInfo);
 document.getElementById('clearAllBtn').addEventListener('click', clearAllData);
+document.getElementById('clearCloudBtn').addEventListener('click', clearAllCloudData);
 
-// --- Segments Event Listeners ---
-document.getElementById('newSegmentBtn').addEventListener('click', () => {
+// --- Legacy Segments Event Listeners (DISABLED - REMOVED HTML ELEMENTS) ---
+// Note: These buttons no longer exist in the HTML since we've moved to Assets model
+// The code is kept for reference but commented out to prevent errors
+
+/*
+document.getElementById('newSegmentBtn')?.addEventListener('click', () => {
     document.getElementById('newSegmentForm').style.display = 'block';
     document.getElementById('newSegmentBtn').style.display = 'none';
     document.getElementById('segmentFormTitle').textContent = 'Create New Segment';
     document.getElementById('newSegmentForm').reset();
 });
 
-document.getElementById('cancelSegmentBtn').addEventListener('click', () => {
+document.getElementById('cancelSegmentBtn')?.addEventListener('click', () => {
     document.getElementById('newSegmentForm').style.display = 'none';
     document.getElementById('newSegmentBtn').style.display = 'inline-block';
 });
 
-document.getElementById('newSegmentForm').addEventListener('submit', (e) => {
+document.getElementById('newSegmentForm')?.addEventListener('submit', (e) => {
     e.preventDefault();
 
     const segmentData = {
@@ -649,36 +1450,310 @@ document.getElementById('newSegmentForm').addEventListener('submit', (e) => {
     // Refresh segments table
     renderSegmentsTable();
 });
+*/
 
-// Segment selection dropdown change handler
+// Asset selection dropdown change handler - updated for Assets & Work Items
 document.addEventListener('DOMContentLoaded', () => {
     // Add this after DOM is loaded
-    const segmentSelect = document.getElementById('segmentSelect');
-    if (segmentSelect) {
-        segmentSelect.addEventListener('change', (e) => {
-            const selectedSegmentId = e.target.value;
-            const hiddenInput = document.getElementById('fieldSegmentId');
-            const infoRow = document.getElementById('segmentInfoRow');
-            const lengthInput = document.getElementById('fieldSegLength');
-            const blockLengthInput = document.getElementById('fieldBlockLength');
+    const assetSelect = document.getElementById('assetSelect');
+    if (assetSelect) {
+        assetSelect.addEventListener('change', (e) => {
+            const selectedAssetId = e.target.value;
+            const hiddenInput = document.getElementById('fieldAssetId');
+            const infoRow = document.getElementById('assetInfoRow');
+            const lengthInput = document.getElementById('fieldAssetInfo');
+            const workItemContainer = document.getElementById('workItemsContainer');
 
-            if (selectedSegmentId) {
-                const segment = getSegment(selectedSegmentId);
-                if (segment) {
-                    hiddenInput.value = selectedSegmentId;
-                    lengthInput.value = segment.length_m;
-                    blockLengthInput.value = segment.block_length_m;
+            if (selectedAssetId) {
+                const asset = getAsset(selectedAssetId);
+                if (asset) {
+                    hiddenInput.value = selectedAssetId;
+                    // Display asset info with available dimensions
+                let assetInfo = '';
+                if (asset.chainage_start_m !== undefined && asset.chainage_end_m !== undefined) {
+                    const startChainage = formatChainage(asset.chainage_start_m);
+                    const endChainage = formatChainage(asset.chainage_end_m);
+                    assetInfo = `${startChainage} - ${endChainage}`;
+                } else if (asset.length_m) {
+                    assetInfo = `${asset.length_m}m long`;
+                } else if (asset.width_m && asset.length_m) {
+                    // Keep for building assets
+                    assetInfo = `${asset.length_m}m × ${asset.width_m}m`;
+                } else {
+                    assetInfo = 'No dimensions specified';
+                }
+                lengthInput.value = assetInfo;
                     infoRow.style.display = 'flex';
+
+                    // Populate work type dropdown with asset-specific work items
+                    populateWorkTypeFromAsset(selectedAssetId);
+                    workItemContainer.style.display = 'block';
                 }
             } else {
                 hiddenInput.value = '';
                 infoRow.style.display = 'none';
+                workItemContainer.style.display = 'none';
                 lengthInput.value = '';
-                blockLengthInput.value = '';
+            }
+        });
+    }
+
+    // Add event listener for auto-populating item code
+    const fieldWorkTypeSelect = document.getElementById('fieldWorkType');
+    if (fieldWorkTypeSelect) {
+        fieldWorkTypeSelect.addEventListener('change', (e) => {
+            const selectedOption = e.target.options[e.target.selectedIndex];
+            const itemCodeInput = document.getElementById('fieldItemCode');
+
+            if (selectedOption.dataset.itemCode && itemCodeInput) {
+                itemCodeInput.value = selectedOption.dataset.itemCode;
             }
         });
     }
 });
+
+// Populate Work Type dropdown with asset-specific work items
+function populateWorkTypeFromAsset(assetId) {
+    const workTypeSelect = document.getElementById('fieldWorkType');
+    if (!workTypeSelect) {
+        console.warn('fieldWorkType element not found');
+        return;
+    }
+
+    const asset = getAsset(assetId);
+    if (!asset) {
+        return;
+    }
+
+    // Clear existing options but keep the first placeholder
+    const currentValue = workTypeSelect.value;
+    workTypeSelect.innerHTML = '<option value="">-- Select Work Type --</option>';
+
+    // Collect all work types to avoid duplicates
+    const addedWorkTypes = new Set();
+    const workTypeNames = [];
+
+    // Add work items from this asset first (prioritized)
+    if (asset.work_items && asset.work_items.length > 0) {
+        asset.work_items.forEach(workItem => {
+            const workType = workItem.work_type;
+            if (workType && !addedWorkTypes.has(workType)) {
+                addedWorkTypes.add(workType);
+                const option = document.createElement('option');
+                option.value = workType;
+                option.textContent = `${workType} (${workItem.item_code || 'N/A'})`;
+                if (workItem.item_code) {
+                    option.dataset.itemCode = workItem.item_code;
+                }
+                workTypeSelect.appendChild(option);
+                workTypeNames.push(workType);
+            }
+        });
+    }
+
+    // Define appropriate work types by asset type
+    const workTypesByAssetType = {
+        'road_section': [
+            'Road Opening', 'Excavation', 'Embankment', 'Subgrade Prep',
+            'Base Course', 'PCCP (Concrete Pavement)', 'Asphalt Works',
+            'Drainage Works', 'Road Furniture'
+        ],
+        'building': [
+            'Site Clearing', 'Excavation', 'Foundation', 'Reinforcement',
+            'Formworks', 'Concrete Pouring', 'Masonry', 'Roofing',
+            'Electrical', 'Plumbing', 'Finishing'
+        ],
+        'flood_control': [
+            'Site Clearing', 'Excavation', 'Embankment', 'Riprap',
+            'Concrete Works', 'Drainage Structures', 'Grouted Riprap',
+            'Gabion Installation', 'Slope Protection'
+        ],
+        'bridge': [
+            'Site Clearing', 'Foundation Works', 'Piling', 'Abutment',
+            'Pier Construction', 'Superstructure', 'Deck Works',
+            'Railings', 'Approach Slabs'
+        ],
+        'culvert': [
+            'Excavation', 'Foundation', 'Concrete Works', 'Culvert Installation',
+            'Headwalls', 'Apron Works', 'Backfilling', 'Compaction'
+        ],
+        'utility': [
+            'Trenching', 'Pipe Laying', 'Manhole Installation', 'Backfilling',
+            'Compaction', 'Connection Works', 'Testing', 'Restoration'
+        ],
+        'landscaping': [
+            'Site Preparation', 'Soil Preparation', 'Planting',
+            'Irrigation Works', 'Hardscaping', 'Lighting', 'Maintenance'
+        ],
+        'other': [
+            'Site Clearing', 'Excavation', 'General Construction',
+            'Others'
+        ]
+    };
+
+    // Get appropriate work types for this asset type
+    const appropriateWorkTypes = workTypesByAssetType[asset.asset_type] || workTypesByAssetType['other'];
+
+    // Only add appropriate work types that aren't already in the asset
+    appropriateWorkTypes.forEach(workType => {
+        if (!addedWorkTypes.has(workType)) {
+            const option = document.createElement('option');
+            option.value = workType;
+            option.textContent = workType;
+            workTypeSelect.appendChild(option);
+        }
+    });
+
+    // Restore previous selection if it still exists
+    if (currentValue) {
+        workTypeSelect.value = currentValue;
+    }
+}
+
+// Populate Work Items dropdown for selected Asset
+function populateWorkItemsDropdown(assetId) {
+    const workItemSelect = document.getElementById('workItemSelect');
+    if (!workItemSelect) {
+        console.warn('workItemSelect element not found - work items dropdown functionality disabled');
+        return;
+    }
+    workItemSelect.innerHTML = '<option value="">-- Select Work Item --</option>';
+
+    const asset = getAsset(assetId);
+    if (!asset || !asset.work_items || asset.work_items.length === 0) {
+        workItemSelect.innerHTML = '<option value="">-- No Work Items (will auto-create) --</option>';
+        return;
+    }
+
+    asset.work_items.forEach(workItem => {
+        const option = document.createElement('option');
+        option.value = workItem.work_item_id;
+        let progressText;
+        if (workItem.target_total && workItem.target_total > 0) {
+            progressText = `${workItem.remaining}/${workItem.target_total} ${workItem.unit}`;
+        } else {
+            progressText = `${workItem.cumulative} ${workItem.unit} (no target)`;
+        }
+        option.textContent = `${workItem.work_type} (${progressText})`;
+        option.dataset.workType = workItem.work_type;
+        option.dataset.itemCode = workItem.item_code || '';
+        option.dataset.unit = workItem.unit;
+        workItemSelect.appendChild(option);
+    });
+}
+
+// Work Item matching algorithm - matches field entry to existing work item or creates new one
+function matchOrCreateWorkItem(assetId, workType, itemCode, quantityToday) {
+    const asset = getAsset(assetId);
+    if (!asset) return null;
+
+    // Use assetWorkItems to avoid shadowing the global workItems array
+    const assetWorkItems = asset.work_items || [];
+
+    // STEP 1: Try to match by item_code first (highest priority)
+    if (itemCode) {
+        const matchByCode = assetWorkItems.find(wi => wi.item_code === itemCode);
+        if (matchByCode) {
+            console.log(`🎯 Matched by item_code: ${itemCode} → ${matchByCode.work_item_id}`);
+            return matchByCode;
+        }
+    }
+
+    // STEP 2: Try to match by work_type (case-insensitive, partial match)
+    const matchByType = assetWorkItems.find(wi =>
+        wi.work_type.toLowerCase().includes(workType.toLowerCase()) ||
+        workType.toLowerCase().includes(wi.work_type.toLowerCase())
+    );
+    if (matchByType) {
+        console.log(`🎯 Matched by work_type: "${workType}" → "${matchByType.work_type}" (${matchByType.work_item_id})`);
+        return matchByType;
+    }
+
+    // STEP 3: Auto-create new work item if no match found
+    const newWorkItemId = `WI-${Date.now().toString(36).toUpperCase()}`;
+    const unit = inferUnitFromQuantity(quantityToday);
+
+    const newWorkItem = {
+        work_item_id: newWorkItemId,
+        asset_id: assetId,  // CRITICAL: Include asset_id for database sync
+        work_type: workType,
+        item_code: itemCode || generateItemCodeFromWorkType(workType),
+        unit: unit,
+        target_total: null, // No default target - user sets actual target later
+        cumulative: 0,
+        remaining: null,
+        status: "pending",
+        priority: "medium",
+        notes: `Auto-created from field entry on ${new Date().toISOString().split('T')[0]}`
+    };
+
+    // Add to asset's work items
+    if (!asset.work_items) {
+        asset.work_items = [];
+    }
+    asset.work_items.push(newWorkItem);
+
+    // Update global workItems array and save
+    workItems.push(newWorkItem);  // Now adds to GLOBAL workItems array, not local copy
+    saveAssets();
+    saveWorkItems();
+
+    console.log(`🆕 Auto-created new work item: ${newWorkItemId} - ${workType}`);
+    return newWorkItem;
+}
+
+// Infer unit from quantity string (intelligent parsing)
+function inferUnitFromQuantity(quantityStr) {
+    const str = quantityStr.toLowerCase().trim();
+
+    // Check for explicit unit mentions
+    if (str.includes('block') || str.includes('pcs')) return 'blocks';
+    if (str.includes('m3') || str.includes('cu.m') || str.includes('cubic')) return 'm3';
+    if (str.includes('m2') || str.includes('sq.m') || str.includes('square')) return 'm2';
+    if (str.includes('m') && !str.includes('m2') && !str.includes('m3')) return 'lm';
+    if (str.includes('kg')) return 'kg';
+    if (str.includes('ton') || str.includes('tonne')) return 'tons';
+
+    // Default to 'blocks' for PCCP and 'm' for others
+    if (str.includes('pccp') || str.includes('concrete') || str.includes('pavement')) {
+        return 'blocks';
+    }
+
+    return 'custom'; // Most flexible default
+}
+
+// Generate item code from work type (simple heuristic)
+function generateItemCodeFromWorkType(workType) {
+    const type = workType.toLowerCase();
+
+    // Common mappings
+    if (type.includes('excavation')) return '101';
+    if (type.includes('pccp') || type.includes('concrete pavement')) return '311';
+    if (type.includes('base') || type.includes('base course')) return '201';
+    if (type.includes('asphalt')) return '301';
+    if (type.includes('drainage')) return '401';
+    if (type.includes('foundation')) return '501';
+    if (type.includes('column') || type.includes('col')) return '502';
+    if (type.includes('beam')) return '503';
+    if (type.includes('slab')) return '504';
+    if (type.includes('roof')) return '505';
+    if (type.includes('finishing') || type.includes('finish')) return '601';
+    if (type.includes('riprap')) return '701';
+    if (type.includes('gabion')) return '702';
+    if (type.includes('planting') || type.includes('vegetation')) return '703';
+
+    // Generate code based on first letters and length
+    const words = workType.split(/\s+/);
+    let code = '';
+    words.forEach(word => {
+        if (word.length > 0) {
+            code += word[0].toUpperCase();
+        }
+    });
+
+    // Add numbers to make it look like an item code
+    return code + (type.length % 900 + 100);
+}
 
 function exportData() {
     if (!activeProject) {
@@ -687,9 +1762,11 @@ function exportData() {
 
     const exportData = {
         exported_at: new Date().toISOString(),
-        version: "v1",
+        version: "v2", // Updated version for Assets & Work Items
         projects: projects,
-        segments: [],
+        segments: [], // Keep for backwards compatibility
+        assets: assets,
+        work_items: workItems,
         field_logs: fieldLogs
     };
 
@@ -718,16 +1795,33 @@ function importData(event) {
         try {
             const data = JSON.parse(e.target.result);
 
+            // Validate required fields (support both v1 and v2 formats)
             if (!data.projects || !Array.isArray(data.projects) || !data.field_logs || !Array.isArray(data.field_logs)) {
                 alert("Invalid import file: Missing projects or field_logs arrays.");
                 return;
             }
 
-            if (!confirm(`Import will merge ${data.projects.length} projects and ${data.field_logs.length} logs. Continue?`)) {
+            // Count what we're importing
+            const assetsCount = data.assets ? data.assets.length : 0;
+            const workItemsCount = data.work_items ? data.work_items.length : 0;
+            const segmentsCount = data.segments ? data.segments.length : 0;
+
+            let confirmMessage = `Import will merge:\n• ${data.projects.length} projects\n• ${data.field_logs.length} field logs`;
+            if (assetsCount > 0) confirmMessage += `\n• ${assetsCount} assets`;
+            if (workItemsCount > 0) confirmMessage += `\n• ${workItemsCount} work items`;
+            if (segmentsCount > 0) confirmMessage += `\n• ${segmentsCount} segments (legacy)`;
+            confirmMessage += '\n\nContinue?';
+
+            if (!confirm(confirmMessage)) {
                 return;
             }
 
             let newProjectsCount = 0;
+            let newAssetsCount = 0;
+            let newWorkItemsCount = 0;
+            let newLogsCount = 0;
+
+            // Import projects
             data.projects.forEach(importedProj => {
                 const existingIndex = projects.findIndex(p => p.project_id === importedProj.project_id);
                 if (existingIndex >= 0) {
@@ -738,10 +1832,45 @@ function importData(event) {
                 }
             });
 
-            let newLogsCount = 0;
+            // Import assets (v2 format)
+            if (data.assets && Array.isArray(data.assets)) {
+                data.assets.forEach(importedAsset => {
+                    if (!importedAsset.asset_id) {
+                        importedAsset.asset_id = `ASSET-${Date.now().toString(36).toUpperCase()}`;
+                    }
+
+                    const existingIndex = assets.findIndex(a => a.asset_id === importedAsset.asset_id);
+                    if (existingIndex === -1) {
+                        assets.push(importedAsset);
+                        newAssetsCount++;
+                    }
+                });
+            }
+
+            // Import work items (v2 format)
+            if (data.work_items && Array.isArray(data.work_items)) {
+                data.work_items.forEach(importedWorkItem => {
+                    if (!importedWorkItem.work_item_id) {
+                        importedWorkItem.work_item_id = `WI-${Date.now().toString(36).toUpperCase()}`;
+                    }
+
+                    const existingIndex = workItems.findIndex(wi => wi.work_item_id === importedWorkItem.work_item_id);
+                    if (existingIndex === -1) {
+                        workItems.push(importedWorkItem);
+                        newWorkItemsCount++;
+                    }
+                });
+            }
+
+            // Import field logs
             data.field_logs.forEach(importedLog => {
                 if (!importedLog.entry_id) {
                     importedLog.entry_id = crypto.randomUUID();
+                }
+
+                // Migrate old segment_id to asset_id for backwards compatibility
+                if (importedLog.segment_id && !importedLog.asset_id) {
+                    importedLog.asset_id = importedLog.segment_id;
                 }
 
                 const existingIndex = fieldLogs.findIndex(l => l.entry_id === importedLog.entry_id);
@@ -751,13 +1880,20 @@ function importData(event) {
                 }
             });
 
+            // Save everything
             saveProjects();
+            saveAssets();
+            saveWorkItems();
             saveFieldLogs();
             updateProjectSelect(activeProject ? activeProject.project_id : "");
 
             event.target.value = '';
 
-            alert(`Import Successful!\nProjects added: ${newProjectsCount}\nLogs added: ${newLogsCount}`);
+            let successMessage = `Import Successful!\n• Projects added: ${newProjectsCount}\n• Field logs added: ${newLogsCount}`;
+            if (newAssetsCount > 0) successMessage += `\n• Assets added: ${newAssetsCount}`;
+            if (newWorkItemsCount > 0) successMessage += `\n• Work items added: ${newWorkItemsCount}`;
+
+            alert(successMessage);
 
         } catch (err) {
             console.error(err);
@@ -797,7 +1933,8 @@ function updateProjectSelect(selectedValue = "") {
     projects.forEach((p, index) => {
         const option = document.createElement('option');
         option.value = index;
-        option.textContent = `${p.project_title} (${p.project_id})`;
+        const projectName = p.project_name || p.project_title || 'Untitled Project';
+        option.textContent = `${projectName} (${p.project_id})`;
         select.appendChild(option);
     });
 
@@ -938,27 +2075,83 @@ document.getElementById('fieldForm').addEventListener('submit', (e) => {
     }
 
     const date = document.getElementById('fieldDate').value;
-    const segmentId = document.getElementById('fieldSegmentId').value;
-    const segLength = parseFloat(document.getElementById('fieldSegLength').value);
-    const blockLength = parseFloat(document.getElementById('fieldBlockLength').value);
-    const blocksToday = parseFloat(document.getElementById('fieldBlocks').value);
+    const assetId = document.getElementById('fieldAssetId').value;
+    const workItemSelect = document.getElementById('workItemSelect');
+    const selectedWorkItemId = workItemSelect ? workItemSelect.value : '';
+    const workType = document.getElementById('fieldWorkType').value;
+    const itemCode = document.getElementById('fieldItemCode').value.trim() || null;
+    const quantityToday = document.getElementById('fieldQuantity').value.trim();
     const crew = parseInt(document.getElementById('fieldCrew').value);
     const weather = document.getElementById('fieldWeather').value;
     const notes = document.getElementById('fieldNotes').value;
     const lat = document.getElementById('fieldLat').value;
     const long = document.getElementById('fieldLong').value;
 
-    // Calculate stats
-    // Filter existing logs for this segment to get previous cumulative
-    const segmentLogs = fieldLogs.filter(l => l.segment_id === segmentId);
-    const prevCumulative = segmentLogs.length > 0 ? segmentLogs[segmentLogs.length - 1].cumulative_blocks : 0;
+    // Validation for new required fields
+    if (!assetId) {
+        alert("Please select an Asset!");
+        return;
+    }
+    if (!workType) {
+        alert("Please select a Work Type!");
+        return;
+    }
+    if (!quantityToday) {
+        alert("Please enter Quantity Today!");
+        return;
+    }
 
-    const cumulative = prevCumulative + blocksToday;
+    // STEP 1: Find or create Work Item using the matching algorithm
+    let workItem = null;
 
-    // Total blocks needed = segLength / blockLength
-    const totalBlocks = segLength / blockLength;
-    const remaining = Math.max(0, totalBlocks - cumulative);
-    const remainingMeters = Math.max(0, segLength - (cumulative * blockLength));
+    // If user selected a specific work item, use it
+    if (selectedWorkItemId) {
+        const asset = getAsset(assetId);
+        workItem = asset.work_items.find(wi => wi.work_item_id === selectedWorkItemId);
+        console.log(`🎯 Using selected work item: ${selectedWorkItemId} - ${workItem.work_type}`);
+    } else {
+        // Use automatic matching algorithm
+        workItem = matchOrCreateWorkItem(assetId, workType, itemCode, quantityToday);
+    }
+
+    if (!workItem) {
+        alert("Error: Could not create or match work item!");
+        return;
+    }
+
+    // STEP 2: Parse quantity and calculate progress
+    let numericQuantity = 0;
+    let unit = workItem.unit;
+
+    // Parse numeric quantity from string (e.g., "15 blocks" -> 15)
+    const quantityMatch = quantityToday.match(/(\d+\.?\d*)/);
+    if (quantityMatch) {
+        numericQuantity = parseFloat(quantityMatch[1]);
+    }
+
+    // Calculate work item progress
+    const workItemLogs = fieldLogs.filter(l => l.work_item_id === workItem.work_item_id);
+    const prevCumulative = workItemLogs.length > 0 ? workItemLogs[workItemLogs.length - 1].work_item_cumulative : 0;
+    const newCumulative = prevCumulative + numericQuantity;
+    const newRemaining = workItem.target_total ? Math.max(0, workItem.target_total - newCumulative) : null;
+
+    // Update work item progress
+    workItem.cumulative = newCumulative;
+    workItem.remaining = newRemaining;
+    if (newRemaining === 0) {
+        workItem.status = 'completed';
+    } else if (numericQuantity > 0) {
+        workItem.status = 'in_progress';
+    }
+
+    // Save updated work item
+    saveAssets();
+    saveWorkItems();
+
+    // Calculate asset overall progress
+    const asset = getAsset(assetId);
+    const assetProgress = calculateAssetProgress(asset);
+    console.log(`📊 Asset progress: ${assetProgress.overallProgress}% (${assetProgress.completedWorkItems}/${assetProgress.totalWorkItems} work items)`);
 
     // Check both inputs for a file
     const photoInput = document.getElementById('fieldPhoto');
@@ -987,17 +2180,26 @@ document.getElementById('fieldForm').addEventListener('submit', (e) => {
         const entry = {
             entry_id: entryId,
             date: date,
-            segment_id: segmentId,
-            shift_output_blocks: blocksToday,
-            cumulative_blocks: cumulative,
-            remaining_blocks: remaining,
-            remaining_meters: remainingMeters,
+            asset_id: assetId,
+            work_item_id: workItem.work_item_id,
+            work_type: workItem.work_type,
+            item_code: workItem.item_code,
+            quantity_today: quantityToday,
+            work_item_quantity: numericQuantity,
+            work_item_unit: workItem.unit,
+            work_item_cumulative: newCumulative,
+            work_item_remaining: newRemaining,
             crew_size: crew,
             weather: weather,
             notes: notes,
             photo_base64: base64Img,
             latitude: lat,
-            longitude: long
+            longitude: long,
+            // Legacy compatibility fields
+            segment_id: assetId, // For backward compatibility
+            shift_output_blocks: unit === 'blocks' ? numericQuantity : 0,
+            cumulative_blocks: unit === 'blocks' ? newCumulative : 0,
+            remaining_blocks: unit === 'blocks' ? newRemaining : 0
         };
 
         fieldLogs.push(entry);
@@ -1005,7 +2207,9 @@ document.getElementById('fieldForm').addEventListener('submit', (e) => {
         renderFieldLogs();
 
         // Reset fields
-        document.getElementById('fieldBlocks').value = '';
+        document.getElementById('fieldWorkType').value = '';
+        document.getElementById('fieldItemCode').value = '';
+        document.getElementById('fieldQuantity').value = '';
         document.getElementById('fieldNotes').value = '';
         document.getElementById('fieldPhoto').value = '';
         document.getElementById('fieldPhotoCamera').value = '';
@@ -1013,6 +2217,14 @@ document.getElementById('fieldForm').addEventListener('submit', (e) => {
         document.getElementById('fieldLong').value = '';
         document.getElementById('gpsStatus').textContent = '';
         document.getElementById('photoPreviewContainer').style.display = 'none';
+
+        // Reset asset-related fields
+        if (document.getElementById('workItemSelect')) {
+            document.getElementById('workItemSelect').value = '';
+        }
+
+        // Refresh Assets tab to show updated progress
+        renderAssets();
     };
 
     if (file) {
@@ -1120,7 +2332,7 @@ function renderFieldLogs() {
         if (Object.keys(logsBySegment).length > 1) {
             const headerRow = document.createElement('tr');
             headerRow.innerHTML = `
-                <td colspan="12" style="background-color: #f3f4f6; font-weight: bold; padding: 8px; border-left: 4px solid #2563eb;">
+                <td colspan="11" style="background-color: #f3f4f6; font-weight: bold; padding: 8px; border-left: 4px solid #2563eb;">
                     ${segment ? `${segment.segment_id} (${segment.length_m}m × ${segment.width_m}m)` : segmentId}
                 </td>
             `;
@@ -1145,11 +2357,10 @@ function renderFieldLogs() {
         tr.innerHTML = `
             <td>${log.date}</td>
             <td>${log.segment_id}</td>
-            <td>${log.shift_output_blocks.toFixed(2)}</td>
-            <td>${log.cumulative_blocks.toFixed(2)}</td>
-            <td>${log.remaining_blocks.toFixed(2)}</td>
-            <td>${log.remaining_meters ? log.remaining_meters.toFixed(2) : '-'}</td>
-            <td>${log.weather}</td>
+            <td style="max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${log.work_type || 'N/A'}">${log.work_type || 'N/A'}</td>
+            <td style="text-align: center;">${log.item_code || '-'}</td>
+            <td style="max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${log.quantity_today || 'N/A'}">${log.quantity_today || 'N/A'}</td>
+        <td>${log.weather}</td>
             <td>${log.crew_size}</td>
             <td style="font-size: 0.8em; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${location}">${location}</td>
             <td>${photoHtml}</td>
@@ -1499,6 +2710,13 @@ function renderLogs(logs) {
 
 // Tab switching function
 window.switchTab = function(tabName) {
+    // Debug logging
+    console.log('switchTab called with:', tabName);
+    const debugInfo = document.getElementById('debugInfo');
+    if (debugInfo) {
+        debugInfo.textContent = `Switching to ${tabName}...`;
+    }
+
     // Hide all tab contents
     document.querySelectorAll('.tab-content').forEach(content => {
         content.style.display = 'none';
@@ -1513,6 +2731,15 @@ window.switchTab = function(tabName) {
     const tabElement = document.getElementById(tabName);
     if (tabElement) {
         tabElement.style.display = 'block';
+        console.log(`Tab ${tabName} shown successfully`);
+        if (debugInfo) {
+            debugInfo.textContent = `Tab ${tabName} active`;
+        }
+    } else {
+        console.error(`Tab element not found: ${tabName}`);
+        if (debugInfo) {
+            debugInfo.textContent = `ERROR: Tab ${tabName} not found`;
+        }
     }
 
     // Add active class to clicked button if event exists
@@ -1521,10 +2748,17 @@ window.switchTab = function(tabName) {
     }
 
     // Tab-specific initialization
-    if (tabName === 'segments') {
-        renderSegmentsTable();
+    if (tabName === 'assets') {
+        renderAssets();
+        populateAssetSelect();
+    } else if (tabName === 'fieldEntry') {
+        renderFieldLogs();
+        // Populate asset dropdown for field entry
+        populateAssetSelect();
     } else if (tabName === 'photoGallery') {
         loadPhotoGallery();
+    } else if (tabName === 'segments') {
+        renderSegmentsTable();
     }
     // Note: simulation tab initialization removed from production UI
 }

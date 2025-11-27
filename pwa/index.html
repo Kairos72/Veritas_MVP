@@ -49,6 +49,7 @@
                     <button id="newProjectBtn" class="btn secondary small">New Project</button>
                     <button id="storageBtn" class="btn small" style="background-color: #f59e0b;">Storage Info</button>
                     <button id="clearAllBtn" class="btn small" style="background-color: #dc2626;">Clear All Data</button>
+                    <button id="clearCloudBtn" class="btn small" style="background-color: #991b1b;">Clear Cloud Data</button>
                 </div>
             </div>
 
@@ -151,11 +152,12 @@
         <!-- Mode Selection Tabs -->
         <div class="tabs">
             <button id="simulationTab" class="tab-btn" style="display: none;" onclick="switchTab('simulation')">Simulation Mode</button>
-            <button class="tab-btn active" onclick="switchTab('segments')">Segments</button>
+            <button class="tab-btn active" onclick="switchTab('assets')">Assets</button>
             <button class="tab-btn" onclick="switchTab('fieldEntry')">Field Entry Mode</button>
             <button class="tab-btn" onclick="switchTab('photoGallery')">Photo Gallery</button>
         </div>
 
+  
         <!-- Simulation Mode (Developer Only) -->
         <div id="simulationContainer" style="display: none;">
             <div id="simulation" class="tab-content">
@@ -210,74 +212,157 @@
         </div>
         </div>
 
-        <!-- Segments Management -->
-        <div id="segments" class="tab-content" style="display: none;">
+        <!-- Assets Management -->
+        <div id="assets" class="tab-content" style="display: none;">
             <section class="card">
                 <div class="section-header">
-                    <h2>Segments Management</h2>
-                    <button id="newSegmentBtn" class="btn primary">Add New Segment</button>
+                    <h2>Assets Management</h2>
+                    <button id="newAssetBtn" class="btn primary">Create New Asset</button>
                 </div>
 
-                <!-- Segments List -->
-                <div id="segmentsListContainer">
+                <!-- Assets List -->
+                <div id="assetsListContainer">
                     <div class="table-container">
-                        <table id="segmentsTable">
+                        <table id="assetsTable">
                             <thead>
                                 <tr>
-                                    <th>Segment ID</th>
-                                    <th>Length (m)</th>
-                                    <th>Width (m)</th>
-                                    <th>Block Length (m)</th>
-                                    <th>Total Blocks</th>
-                                    <th>Blocks Remaining</th>
-                                    <th>Chainage Start</th>
+                                    <th>Asset ID</th>
+                                    <th>Name</th>
+                                    <th>Type</th>
+                                    <th>Length/Location</th>
+                                    <th>Work Items</th>
+                                    <th>Progress</th>
                                     <th>Actions</th>
                                 </tr>
                             </thead>
-                            <tbody id="segmentsTableBody">
-                                <!-- Segments will be populated here -->
+                            <tbody id="assetsTableBody">
+                                <!-- Assets will be populated here -->
                             </tbody>
                         </table>
-                        <div id="noSegmentsMessage" style="text-align: center; padding: 40px; color: #666; display: none;">
-                            <p>No segments created yet.</p>
-                            <p>Click "Add New Segment" to get started.</p>
+                        <div id="noAssetsMessage" style="text-align: center; padding: 40px; color: #666; display: none;">
+                            <p>No assets created yet.</p>
+                            <p>Click "Create New Asset" to get started.</p>
                         </div>
                     </div>
                 </div>
 
-                <!-- New Segment Form (Hidden by default) -->
-                <form id="newSegmentForm" style="display: none; margin-top: 20px; border-top: 1px solid #eee; padding-top: 20px;">
-                    <h3 id="segmentFormTitle">Create New Segment</h3>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label>Segment ID</label>
-                            <input type="text" id="segId" required placeholder="SEG-001">
+                <!-- Asset Creation Modal (Hidden by default) -->
+                <div id="assetModal" class="modal" style="display: none;">
+                    <div class="modal-content" style="max-width: 800px; max-height: 90vh; overflow-y: auto;">
+                        <div class="modal-header">
+                            <h3 id="assetModalTitle">Create New Asset</h3>
+                            <button class="modal-close" onclick="closeAssetModal()">&times;</button>
                         </div>
-                        <div class="form-group">
-                            <label>Chainage Start (optional)</label>
-                            <input type="text" id="segChainageStart" placeholder="0+000">
-                        </div>
+                        <form id="assetForm">
+                            <!-- Asset Type Selection -->
+                            <div class="form-group">
+                                <label>Asset Type *</label>
+                                <select id="assetType" name="assetType" required>
+                                    <option value="">-- Select Asset Type --</option>
+                                    <option value="road_section">Road Section</option>
+                                    <option value="building">Building</option>
+                                    <option value="flood_control">Flood Control</option>
+                                    <option value="bridge">Bridge</option>
+                                    <option value="culvert">Culvert</option>
+                                    <option value="utility">Utility</option>
+                                    <option value="landscaping">Landscaping</option>
+                                    <option value="other">Other</option>
+                                </select>
+                            </div>
+
+                            <!-- Basic Asset Info -->
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>Asset Name *</label>
+                                    <input type="text" id="assetName" name="assetName" required placeholder="e.g., Main Highway Lane 1">
+                                </div>
+                                <div class="form-group">
+                                    <label>Description</label>
+                                    <input type="text" id="assetDescription" name="assetDescription" placeholder="Optional detailed description">
+                                </div>
+                            </div>
+
+                            <!-- Road Section Fields -->
+                            <div id="roadSectionFields" style="display: none;">
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label>Chainage Start</label>
+                                        <input type="text" id="chainageStart" placeholder="0+000">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Chainage End</label>
+                                        <input type="text" id="chainageEnd" placeholder="0+100">
+                                    </div>
+                                </div>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label>Side</label>
+                                        <select id="roadSide">
+                                            <option value="">-- Select Side --</option>
+                                            <option value="left">Left</option>
+                                            <option value="right">Right</option>
+                                            <option value="center">Center</option>
+                                            <option value="both">Both</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Building Fields -->
+                            <div id="buildingFields" style="display: none;">
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label>Length (m)</label>
+                                        <input type="number" id="buildingLength" step="0.1" placeholder="24">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Width (m)</label>
+                                        <input type="number" id="buildingWidth" step="0.1" placeholder="12">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Flood Control Fields -->
+                            <div id="floodControlFields" style="display: none;">
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label>Chainage Start</label>
+                                        <input type="text" id="floodChainageStart" placeholder="5+200">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Chainage End</label>
+                                        <input type="text" id="floodChainageEnd" placeholder="5+375">
+                                    </div>
+                                </div>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label>Bank Side</label>
+                                        <select id="floodSide">
+                                            <option value="">-- Select Side --</option>
+                                            <option value="left">Left Bank</option>
+                                            <option value="right">Right Bank</option>
+                                            <option value="both">Both Banks</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Common Fields -->
+                            <div class="form-group">
+                                <label>Work Items (Optional)</label>
+                                <div id="workItemsContainer">
+                                    <div id="workItemsList"></div>
+                                    <button type="button" id="addWorkItemBtn" class="btn secondary" style="font-size: 0.9rem;">+ Add Work Item</button>
+                                </div>
+                            </div>
+
+                            <div class="form-row">
+                                <button type="submit" class="btn primary">Create Asset</button>
+                                <button type="button" id="cancelAssetBtn" class="btn secondary" style="background-color: #9ca3af;">Cancel</button>
+                            </div>
+                        </form>
                     </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label>Length (m)</label>
-                            <input type="number" id="segLength" required step="0.1" placeholder="50">
-                        </div>
-                        <div class="form-group">
-                            <label>Width (m)</label>
-                            <input type="number" id="segWidth" required step="0.1" placeholder="3.5">
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label>Block Length (m)</label>
-                        <input type="number" id="segBlockLength" value="4.5" step="0.1" required>
-                        <small>Standard block length is 4.5 meters</small>
-                    </div>
-                    <div class="form-row">
-                        <button type="submit" class="btn primary">Save Segment</button>
-                        <button type="button" id="cancelSegmentBtn" class="btn secondary" style="background-color: #9ca3af;">Cancel</button>
-                    </div>
-                </form>
+                </div>
             </section>
         </div>
 
@@ -292,28 +377,50 @@
                             <input type="date" id="fieldDate" required>
                         </div>
                         <div class="form-group">
-                            <label>Select Segment</label>
-                            <select id="segmentSelect" required>
-                                <option value="">-- Select a Segment --</option>
+                            <label>Select Asset</label>
+                            <select id="assetSelect" required>
+                                <option value="">-- Select an Asset --</option>
                             </select>
-                            <input type="hidden" id="fieldSegmentId">
+                            <input type="hidden" id="fieldAssetId">
                         </div>
                     </div>
-                    <div class="form-row" id="segmentInfoRow" style="display: none;">
+                    <div class="form-row" id="assetInfoRow" style="display: none;">
                         <div class="form-group">
-                            <label>Segment Length (m)</label>
-                            <input type="number" id="fieldSegLength" readonly style="background-color: #f9f9f9;">
+                            <label>Asset Info</label>
+                            <input type="text" id="fieldAssetInfo" readonly style="background-color: #f9f9f9;">
+                        </div>
+                    </div>
+                    <!-- NEW FIELDS FOR UNIVERSAL CONSTRUCTION TRACKING -->
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Work Type *</label>
+                            <select id="fieldWorkType" required>
+                                <option value="">-- Select Work Type --</option>
+                                <option value="Road Opening">Road Opening</option>
+                                <option value="Excavation">Excavation</option>
+                                <option value="Embankment">Embankment</option>
+                                <option value="Subgrade Prep">Subgrade Prep</option>
+                                <option value="Base Course">Base Course</option>
+                                <option value="PCCP (Concrete Pavement)">PCCP (Concrete Pavement)</option>
+                                <option value="Asphalt Works">Asphalt Works</option>
+                                <option value="Drainage Works">Drainage Works</option>
+                                <option value="Structures">Structures</option>
+                                <option value="Road Furniture">Road Furniture</option>
+                                <option value="Others">Others</option>
+                            </select>
                         </div>
                         <div class="form-group">
-                            <label>Block Length (m)</label>
-                            <input type="number" id="fieldBlockLength" readonly style="background-color: #f9f9f9;">
+                            <label>Item Code</label>
+                            <input type="text" id="fieldItemCode" placeholder="e.g., 311, 208" maxlength="20">
                         </div>
                     </div>
                     <div class="form-row">
                         <div class="form-group">
-                            <label>Blocks Completed Today</label>
-                            <input type="number" id="fieldBlocks" step="0.01" placeholder="0.75" required>
+                            <label>Quantity Today *</label>
+                            <input type="text" id="fieldQuantity" placeholder="e.g., 0.75 blocks, 10 m3, 15 lm, 12 m2, 5 pcs" required>
                         </div>
+                    </div>
+                    <div class="form-row">
                         <div class="form-group">
                             <label>Crew Size</label>
                             <input type="number" id="fieldCrew" value="5" required>
@@ -396,10 +503,9 @@
                             <tr>
                                 <th>Date</th>
                                 <th>Segment</th>
-                                <th>Blocks</th>
-                                <th>Cumulative (Blocks)</th>
-                                <th>Remaining (Blocks)</th>
-                                <th>Remaining (m)</th>
+                                <th>Work Type</th>
+                                <th>Item Code</th>
+                                <th>Quantity Today</th>
                                 <th>Weather</th>
                                 <th>Crew</th>
                                 <th>Location</th>

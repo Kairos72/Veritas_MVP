@@ -1,0 +1,89 @@
+{
+  "asset_id": "ASSET-BLD-001",
+  "asset_type": "building",
+  "name": "Elementary School - Classroom Block A - Wing 1",
+  "description": "2-storey classroom block with 8 classrooms, administration office, and library",
+  "length_m": 24,
+  "width_m": 12,
+  "location": {
+    "lat": 14.6012,
+    "lng": 120.9856
+  },
+  "project_id": "PROJ-002",
+  "work_items": [
+    {
+      "work_item_id": "WI-FND-01",
+      "work_type": "Foundation (Excavation + Concrete)",
+      "item_code": "501",
+      "unit": "m3",
+      "target_total": 180,
+      "cumulative": 45,
+      "remaining": 135,
+      "status": "in_progress",
+      "priority": "critical",
+      "notes": "Isolated footings, grade beams, and ground floor slab"
+    },
+    {
+      "work_item_id": "WI-COL-01",
+      "work_type": "Superstructure Columns",
+      "item_code": "502",
+      "unit": "pcs",
+      "target_total": 24,
+      "cumulative": 8,
+      "remaining": 16,
+      "status": "in_progress",
+      "priority": "high",
+      "notes": "300mm x 300mm RC columns, 4.5m height"
+    },
+    {
+      "work_item_id": "WI-BEAM-01",
+      "work_type": "Beams and Girders",
+      "item_code": "503",
+      "unit": "pcs",
+      "target_total": 16,
+      "cumulative": 4,
+      "remaining": 12,
+      "status": "in_progress",
+      "priority": "high",
+      "notes": "Primary and secondary beams, 300mm x 500mm"
+    },
+    {
+      "work_item_id": "WI-SLAB-01",
+      "work_type": "Floor Slabs",
+      "item_code": "504",
+      "unit": "m2",
+      "target_total": 288,
+      "cumulative": 72,
+      "remaining": 216,
+      "status": "in_progress",
+      "priority": "high",
+      "notes": "125mm RC slabs for both floors"
+    },
+    {
+      "work_item_id": "WI-ROOF-01",
+      "work_type": "Roofing System",
+      "item_code": "505",
+      "unit": "m2",
+      "target_total": 144,
+      "cumulative": 0,
+      "remaining": 144,
+      "status": "pending",
+      "priority": "medium",
+      "notes": "Metal deck roofing with insulation"
+    },
+    {
+      "work_item_id": "WI-FIN-01",
+      "work_type": "Finishing Works",
+      "item_code": "601",
+      "unit": "m2",
+      "target_total": 576,
+      "cumulative": 0,
+      "remaining": 576,
+      "status": "pending",
+      "priority": "low",
+      "notes": "Wall plastering, flooring, painting"
+    }
+  ],
+  "created_at": "2025-01-20T06:30:00Z",
+  "updated_at": "2025-01-27T11:15:00Z"
+}

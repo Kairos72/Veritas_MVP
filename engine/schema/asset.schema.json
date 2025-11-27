@@ -1,0 +1,164 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Asset Schema",
+  "description": "Physical asset being monitored in a construction project",
+  "type": "object",
+  "required": ["asset_id", "name", "asset_type"],
+  "properties": {
+    "asset_id": {
+      "type": "string",
+      "pattern": "^ASSET-[A-Z]{2,4}-\\d{3,}$",
+      "description": "Unique identifier for the asset (format: ASSET-XXX-000)"
+    },
+    "name": {
+      "type": "string",
+      "description": "Human-readable name of the asset"
+    },
+    "asset_type": {
+      "type": "string",
+      "enum": ["road_section", "building", "flood_control", "bridge", "culvert", "utility", "landscaping", "other"],
+      "description": "Type of physical asset"
+    },
+    "description": {
+      "type": "string",
+      "description": "Optional detailed description of the asset"
+    },
+    "chainage_start_m": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Chainage start position in meters (for linear assets)"
+    },
+    "chainage_end_m": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Chainage end position in meters (for linear assets)"
+    },
+    "side": {
+      "type": "string",
+      "enum": ["left", "right", "center", "both"],
+      "description": "Side specification (for road assets)"
+    },
+    "length_m": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Total length in meters"
+    },
+    "width_m": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Width in meters (for road/area assets)"
+    },
+    "location": {
+      "type": "object",
+      "properties": {
+        "lat": {
+          "type": "number",
+          "minimum": -90,
+          "maximum": 90
+        },
+        "lng": {
+          "type": "number",
+          "minimum": -180,
+          "maximum": 180
+        }
+      },
+      "description": "GPS coordinates of the asset"
+    },
+    "work_items": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/work_item"
+      },
+      "description": "List of work items for this asset"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp when asset was created"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp when asset was last updated"
+    },
+    "project_id": {
+      "type": "string",
+      "description": "Project this asset belongs to"
+    }
+  },
+  "definitions": {
+    "work_item": {
+      "type": "object",
+      "required": ["work_item_id", "work_type", "unit"],
+      "properties": {
+        "work_item_id": {
+          "type": "string",
+          "pattern": "^WI-[A-Z0-9]{2,}-\\d{2,}$",
+          "description": "Unique identifier for the work item"
+        },
+        "work_type": {
+          "type": "string",
+          "description": "Type of work being performed"
+        },
+        "item_code": {
+          "type": "string",
+          "description": "Standard item code (optional)"
+        },
+        "unit": {
+          "type": "string",
+          "enum": ["blocks", "m", "lm", "m2", "m3", "pcs", "kg", "tons", "custom"],
+          "description": "Unit of measurement"
+        },
+        "target_total": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Target quantity for this work item"
+        },
+        "cumulative": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Cumulative quantity completed"
+        },
+        "remaining": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Remaining quantity to complete"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "in_progress", "completed", "on_hold", "cancelled"],
+          "default": "pending",
+          "description": "Current status of the work item"
+        },
+        "priority": {
+          "type": "string",
+          "enum": ["low", "medium", "high", "critical"],
+          "default": "medium",
+          "description": "Priority level of the work item"
+        },
+        "notes": {
+          "type": "string",
+          "description": "Optional notes about the work item"
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "$comment": "See examples/asset_example_road.json for complete road section example",
+      "asset_id": "ASSET-RD-001",
+      "name": "Main Highway Lane 1",
+      "asset_type": "road_section",
+      "work_items": [
+        {
+          "work_item_id": "WI-311-01",
+          "work_type": "PCCP",
+          "item_code": "311",
+          "unit": "blocks",
+          "target_total": 100,
+          "cumulative": 25
+        }
+      ]
+    }
+  ]
+}

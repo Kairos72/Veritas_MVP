@@ -1,6 +1,6 @@
-const CACHE_NAME = 'veritas-mvp-v11-' + Date.now();
+// Simple Service Worker that won't cause fetch errors
+const CACHE_NAME = 'veritas-mvp-v12-' + Date.now();
 const ASSETS_TO_CACHE = [
-    './',
     './index.html',
     './style.css',
     './app.js',
@@ -14,99 +14,102 @@ const ASSETS_TO_CACHE = [
 
 // Install event: Cache assets
 self.addEventListener('install', (event) => {
+    console.log('[SW] Installing new version:', CACHE_NAME);
     event.waitUntil(
         caches.open(CACHE_NAME)
             .then((cache) => {
-                console.log('[Service Worker] Caching all assets');
+                console.log('[SW] Caching assets');
                 return cache.addAll(ASSETS_TO_CACHE);
+            })
+            .then(() => {
+                console.log('[SW] Installation complete');
+                return self.skipWaiting();
+            })
+            .catch(error => {
+                console.warn('[SW] Installation warning:', error);
             })
     );
 });
 
 // Activate event: Clean up old caches
 self.addEventListener('activate', (event) => {
-    console.log('[Service Worker] Activating new version:', CACHE_NAME);
+    console.log('[SW] Activating new version:', CACHE_NAME);
     event.waitUntil(
-        caches.keys().then((cacheNames) => {
-            return Promise.all([
-                // Delete all old caches
-                ...cacheNames.map((cacheName) => {
-                    if (cacheName !== CACHE_NAME) {
-                        console.log('[Service Worker] Deleting old cache:', cacheName);
-                        return caches.delete(cacheName);
-                    }
-                }),
-                // Take control of all clients immediately
-                self.clients.claim()
-            ]);
-        })
+        caches.keys()
+            .then((cacheNames) => {
+                return Promise.all(
+                    cacheNames.map((cacheName) => {
+                        if (cacheName !== CACHE_NAME) {
+                            console.log('[SW] Deleting old cache:', cacheName);
+                            return caches.delete(cacheName);
+                        }
+                    })
+                );
+            })
+            .then(() => {
+                console.log('[SW] Activation complete');
+                return self.clients.claim();
+            })
     );
 });
 
-// Fetch event: Serve from cache, fall back to network
+// Simple fetch handler that won't cause errors
 self.addEventListener('fetch', (event) => {
-    // Skip non-GET requests
+    // Only handle GET requests
     if (event.request.method !== 'GET') {
         return;
     }
 
+    // Skip problematic requests that might fail
+    if (event.request.url === 'http://localhost:8000/' ||
+        event.request.url === 'http://localhost:8000' ||
+        event.request.url.endsWith('/') && event.request.url.includes('localhost:8000')) {
+        return; // Let browser handle these directly
+    }
+
     event.respondWith(
         caches.match(event.request)
-            .then((response) => {
-                // Cache hit - return response
-                if (response) {
-                    return response;
+            .then((cachedResponse) => {
+                // Return cached version if available
+                if (cachedResponse) {
+                    return cachedResponse;
                 }
 
-                // Network request for uncached resources
+                // Try network request
                 return fetch(event.request)
                     .then((response) => {
-                        // Don't cache non-successful responses
-                        if (!response || response.status !== 200 || response.type !== 'basic') {
+                        // Don't cache if not a successful response
+                        if (!response || response.status !== 200) {
                             return response;
                         }
 
-                        // Only cache local resources, not external ones
-                        if (event.request.url.startsWith('http://localhost') ||
-                            event.request.url.startsWith('http://192.168.') ||
-                            !event.request.url.startsWith('http')) {
+                        // Cache successful responses for local files
+                        if (event.request.url.startsWith(self.location.origin)) {
                             const responseToCache = response.clone();
                             caches.open(CACHE_NAME)
                                 .then((cache) => {
-                                    cache.put(event.request, responseToCache);
+                                    cache.put(event.request, responseToCache)
+                                        .catch(error => {
+                                            console.warn('[SW] Cache warning:', error);
+                                        });
                                 });
                         }
 
                         return response;
                     })
-                    .catch((error) => {
-                        console.log('[SW] Network request failed for:', event.request.url);
-
-                        // Network failed - try to serve offline page for HTML requests
+                    .catch(() => {
+                        // Network failed - try to return cached index.html for navigation requests
                         if (event.request.destination === 'document') {
                             return caches.match('./index.html');
                         }
 
-                        // For API requests, return an offline error response
-                        if (event.request.url.includes('/api/') || event.request.url.includes(':5000')) {
-                            return new Response(
-                                JSON.stringify({
-                                    error: 'Offline - No network connection',
-                                    offline: true
-                                }),
-                                {
-                                    status: 503,
-                                    statusText: 'Service Unavailable',
-                                    headers: {
-                                        'Content-Type': 'application/json'
-                                    }
-                                }
-                            );
-                        }
-
-                        // For external resources that failed, just return empty response
+                        // Return empty response for other failed requests
                         return new Response('', { status: 200 });
                     });
+            })
+            .catch((error) => {
+                console.warn('[SW] Fetch handler error:', error);
+                return new Response('Service Worker Error', { status: 500 });
             })
     );
 });

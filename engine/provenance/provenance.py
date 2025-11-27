@@ -75,6 +75,12 @@ def create_provenance_pdf(shift_logs: List[Dict[str, Any]], output_path: str, pr
         pdf.ln(2)
         
         pdf.set_font("Arial", "", 12)
+        # New universal construction tracking fields
+        pdf.cell(0, 8, f"Work Type: {log.get('work_type', 'N/A')}", ln=True)
+        if log.get('item_code'):
+            pdf.cell(0, 8, f"Item Code: {log.get('item_code')}", ln=True)
+        pdf.cell(0, 8, f"Quantity Today: {log.get('quantity_today', 'N/A')}", ln=True)
+        # Original blocks field for backwards compatibility
         pdf.cell(0, 8, f"Blocks Completed Today: {log.get('shift_output_blocks', 0)}", ln=True)
         pdf.cell(0, 8, f"Cumulative Blocks: {log.get('cumulative_blocks', 0)}", ln=True)
         pdf.cell(0, 8, f"Remaining Blocks: {log.get('remaining_blocks', 0)}", ln=True)

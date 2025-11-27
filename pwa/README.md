@@ -1,5 +1,39 @@
 # Veritas MVP PWA
 
+## Universal Construction Tracking
+
+The Field Entry Mode now supports all construction phases, not just PCCP:
+
+### Work Types Supported
+- Road Opening
+- Excavation
+- Embankment
+- Subgrade Prep
+- Base Course
+- PCCP (Concrete Pavement)
+- Asphalt Works
+- Drainage Works
+- Structures
+- Road Furniture
+- Others
+
+### Streamlined Field Entry Fields
+- **Work Type** (required): Dropdown with construction phases
+- **Item Code** (optional): Text input for catalog numbers (e.g., "311", "208")
+- **Quantity Today** (required): Free-text with units (e.g., "0.75 blocks", "10 m3", "15 lm", "12 m2", "5 pcs")
+
+### Intelligent Block Tracking
+- **Automatic Parsing**: When Work Type = "PCCP" and Quantity Today contains "X blocks", the system automatically extracts the block count
+- **Smart Calculations**: Cumulative and remaining block counts are updated automatically for PCCP entries
+- **Clean Interface**: No separate "Blocks Completed Today" field - one universal Quantity field for all work types
+- **Backwards Compatible**: Existing data with legacy block fields continues to work correctly
+
+### Universal Data Model
+All field logs include Work Type, Item Code, and Quantity Today fields with full backwards compatibility. Block calculations are intelligently maintained for PCCP work types while supporting flexible units for all other construction phases.
+
+### Admin Migration Tool
+Optional script `/tools/migrate_blocks_from_legacy.py` available for administrators to convert legacy data formats to the new universal system.
+
 ## UI Mode Configuration
 
 The PWA supports two different interface modes:
