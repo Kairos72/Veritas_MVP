@@ -31,3 +31,6 @@ veritas_export_*.json
 # OS
 .DS_Store
 Thumbs.db
+
+# Launch Materials (sensitive business information)
+docs/launch_materials/
