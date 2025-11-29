@@ -128,6 +128,9 @@ window.loadFieldLogs = function () {
 
         // Fix duplicate entry_id issues
         fieldLogs = fixDuplicateEntryIds(fieldLogs);
+
+        // Fix missing project_id for existing logs
+        fieldLogs = fixMissingProjectIds(fieldLogs);
     }
     if (typeof renderFieldLogs === 'function') {
         renderFieldLogs();
@@ -830,12 +833,14 @@ function handleAssetFormSubmit() {
         if (workType && unit) {
             workItems.push({
                 work_item_id: generateWorkItemId(),
+                project_id: activeProject ? activeProject.project_id : null,
+                asset_id: assetId,
                 work_type: workType,
                 item_code: itemCode || null,
                 unit: unit,
                 target_total: targetTotal,
                 cumulative: 0,
-                remaining: target_total,
+                remaining: targetTotal,
                 status: 'pending',
                 priority: 'medium',
                 notes: ''
@@ -1047,6 +1052,32 @@ function fixDuplicateEntryIds(logs) {
     if (logs.length !== fixedLogs.length || Object.keys(idCounts).some(id => idCounts[id] > 1)) {
         localStorage.setItem('veritas_field_logs', JSON.stringify(fixedLogs));
         console.log('Fixed duplicate entry IDs in field logs');
+    }
+
+    return fixedLogs;
+}
+
+// Fix missing project_id for existing field logs
+function fixMissingProjectIds(logs) {
+    const fixedLogs = [...logs];
+    let hasFixes = false;
+
+    fixedLogs.forEach(log => {
+        // If project_id is missing or undefined, try to determine it
+        if (!log.project_id || log.project_id === '0') {
+            // For now, assign to the first available project if no logs exist
+            if (projects.length > 0) {
+                log.project_id = projects[0].project_id;
+                hasFixes = true;
+                console.log(`Fixed missing project_id for log ${log.entry_id}: set to ${log.project_id}`);
+            }
+        }
+    });
+
+    // Save the fixed logs back to storage if we made changes
+    if (hasFixes) {
+        localStorage.setItem('veritas_field_logs', JSON.stringify(fixedLogs));
+        console.log('Fixed missing project IDs in field logs');
     }
 
     return fixedLogs;
@@ -2180,11 +2211,14 @@ document.getElementById('fieldForm').addEventListener('submit', (e) => {
         const entry = {
             entry_id: entryId,
             date: date,
+            project_id: activeProject.project_id, // Add project_id!
             asset_id: assetId,
             work_item_id: workItem.work_item_id,
             work_type: workItem.work_type,
             item_code: workItem.item_code,
             quantity_today: quantityToday,
+            // CRITICAL FIX: Preserve the complete quantity text from user input
+            quantity_text: quantityToday, // Preserves "5 cubic meters" exactly as user entered
             work_item_quantity: numericQuantity,
             work_item_unit: workItem.unit,
             work_item_cumulative: newCumulative,
@@ -2757,6 +2791,9 @@ window.switchTab = function(tabName) {
         populateAssetSelect();
     } else if (tabName === 'photoGallery') {
         loadPhotoGallery();
+    } else if (tabName === 'dailySummary') {
+        initializeDailySummary();
+        renderDailySummary();
     } else if (tabName === 'segments') {
         renderSegmentsTable();
     }
@@ -3275,4 +3312,536 @@ function formatDate(dateString) {
     } catch (e) {
         return dateString;
     }
+}
+
+// ===============================
+// DAILY SUMMARY FUNCTIONALITY
+// ===============================
+
+let dailySummaryState = {
+    selectedProject: null,
+    selectedDate: null,
+    aggregatedData: null
+};
+
+// Initialize Daily Summary tab
+function initializeDailySummary() {
+    // Set default date to today in Asia/Manila timezone
+    const today = new Date();
+    const manilaOffset = 8 * 60; // UTC+8 for Manila
+    const manilaTime = new Date(today.getTime() + (manilaOffset * 60000) + today.getTimezoneOffset() * 60000);
+    const todayString = manilaTime.toISOString().split('T')[0];
+
+    const dateInput = document.getElementById('summaryDatePicker');
+    if (dateInput) {
+        dateInput.value = todayString;
+        dailySummaryState.selectedDate = todayString;
+    }
+
+    // Populate project selector
+    populateSummaryProjectSelector();
+
+    // Setup event listeners
+    setupDailySummaryListeners();
+}
+
+// Setup Daily Summary event listeners
+function setupDailySummaryListeners() {
+    // Project selector change
+    const projectSelect = document.getElementById('summaryProjectSelect');
+    if (projectSelect) {
+        projectSelect.addEventListener('change', (e) => {
+            dailySummaryState.selectedProject = e.target.value;
+            renderDailySummary();
+        });
+    }
+
+    // Date picker change
+    const dateInput = document.getElementById('summaryDatePicker');
+    if (dateInput) {
+        dateInput.addEventListener('change', (e) => {
+            dailySummaryState.selectedDate = e.target.value;
+            renderDailySummary();
+        });
+    }
+
+    // Previous/Next date buttons
+    const prevBtn = document.getElementById('prevDateBtn');
+    const nextBtn = document.getElementById('nextDateBtn');
+
+    if (prevBtn) {
+        prevBtn.addEventListener('click', () => {
+            changeDateByDays(-1);
+        });
+    }
+
+    if (nextBtn) {
+        nextBtn.addEventListener('click', () => {
+            changeDateByDays(1);
+        });
+    }
+
+    // Refresh/Sync button
+    const refreshBtn = document.getElementById('refreshSummaryBtn');
+    if (refreshBtn) {
+        refreshBtn.addEventListener('click', () => {
+            if (isOnline()) {
+                syncFromSupabase();
+                renderDailySummary();
+            } else {
+                alert('You are currently offline. Showing cached data.');
+            }
+        });
+    }
+
+    // Download PDF button
+    const pdfBtn = document.getElementById('downloadSummaryPdfBtn');
+    if (pdfBtn) {
+        pdfBtn.addEventListener('click', () => {
+            downloadDailySummaryPDF();
+        });
+    }
+}
+
+// Change date by +/- days
+function changeDateByDays(days) {
+    const dateInput = document.getElementById('summaryDatePicker');
+    if (!dateInput || !dateInput.value) return;
+
+    const currentDate = new Date(dateInput.value + 'T00:00:00');
+    currentDate.setDate(currentDate.getDate() + days);
+
+    const newDateString = currentDate.toISOString().split('T')[0];
+    dateInput.value = newDateString;
+    dailySummaryState.selectedDate = newDateString;
+
+    renderDailySummary();
+}
+
+// Populate project selector for summary
+function populateSummaryProjectSelector() {
+    const projectSelect = document.getElementById('summaryProjectSelect');
+    if (!projectSelect) return;
+
+    // Clear existing options
+    projectSelect.innerHTML = '<option value="">-- Select Project --</option>';
+
+    // Add projects
+    projects.forEach(project => {
+        const option = document.createElement('option');
+        option.value = project.project_id;
+        option.textContent = `${project.project_id} - ${project.project_name || project.project_title || project.contract || project.project_id}`;
+        projectSelect.appendChild(option);
+    });
+
+    // Set default to active project if available
+    const activeProjectSelect = document.getElementById('projectSelect');
+    if (activeProjectSelect && activeProjectSelect.value) {
+        projectSelect.value = activeProjectSelect.value;
+        dailySummaryState.selectedProject = activeProjectSelect.value;
+    }
+}
+
+// Render Daily Summary
+function renderDailySummary() {
+    if (!dailySummaryState.selectedProject || !dailySummaryState.selectedDate) {
+        // Show no activity message
+        showNoActivity(false);
+        return;
+    }
+
+    // Aggregate data for selected project and date
+    dailySummaryState.aggregatedData = aggregateDailyData(dailySummaryState.selectedProject, dailySummaryState.selectedDate);
+
+    if (!dailySummaryState.aggregatedData || dailySummaryState.aggregatedData.totalEntries === 0) {
+        showNoActivity(true);
+        return;
+    }
+
+    // Hide no activity message
+    document.getElementById('noActivityMessage').style.display = 'none';
+    document.getElementById('assetAccordions').style.display = 'block';
+    document.getElementById('summaryTimeline').style.display = 'block';
+
+    // Update KPI cards
+    updateKPICards();
+
+    // Render asset accordions
+    renderAssetAccordions();
+
+    // Render timeline
+    renderTimeline();
+}
+
+// Aggregate daily data
+function aggregateDailyData(projectId, date) {
+    // Filter field logs by project and date
+    const dayLogs = fieldLogs.filter(log => {
+        if (log.project_id !== projectId) {
+            return false;
+        }
+
+        // Simple date matching - compare YYYY-MM-DD format directly
+        const logDateString = log.date.split('T')[0]; // This handles both YYYY-MM-DD and ISO formats
+        return logDateString === date;
+    });
+
+    if (dayLogs.length === 0) {
+        return {
+            totalEntries: 0,
+            uniqueAssets: [],
+            assetWorkItems: {},
+            photos: [],
+            timeline: []
+        };
+    }
+
+    // Aggregate data
+    const assetWorkItems = {};
+    const uniqueAssets = new Set();
+    const photos = [];
+    const timeline = [];
+
+    dayLogs.forEach(log => {
+        // Track unique assets
+        uniqueAssets.add(log.asset_id);
+
+        // Initialize asset in work items structure
+        if (!assetWorkItems[log.asset_id]) {
+            const asset = getAsset(log.asset_id);
+            assetWorkItems[log.asset_id] = {
+                assetInfo: asset || { asset_id: log.asset_id, name: 'Unknown Asset' },
+                workItems: {},
+                photos: [],
+                totalQuantity: 0
+            };
+        }
+
+        // Create work item key
+        const workItemKey = log.item_code || log.work_type || 'unknown';
+
+        // Initialize work item
+        if (!assetWorkItems[log.asset_id].workItems[workItemKey]) {
+            assetWorkItems[log.asset_id].workItems[workItemKey] = {
+                item_code: log.item_code || '',
+                work_type: log.work_type || 'Unknown',
+                unit: log.unit || 'pcs', // Will be updated with work item definition unit
+                entries: [],
+                totalQuantity: 0,
+                cumulative: 0,
+                remaining: 0,
+                target_total: null,
+                photos: []
+            };
+        }
+
+        // Add entry to work item
+        const workItem = assetWorkItems[log.asset_id].workItems[workItemKey];
+        workItem.entries.push(log);
+
+        // CRITICAL FIX: Handle quantity_text for display and numeric value for calculations
+        const quantityText = log.quantity_text || log.quantity_today || '0';
+        const numericValue = parseFloat(log.quantity_today || 0);
+
+        // Add numeric value for calculations (totaling, progress, etc.)
+        workItem.totalQuantity += numericValue;
+
+        // Store the original quantity text for display in Daily Summary
+        if (!workItem.quantityDisplayTexts) {
+            workItem.quantityDisplayTexts = [];
+        }
+        workItem.quantityDisplayTexts.push(quantityText);
+
+        // Add to timeline
+        timeline.push({
+            timestamp: log.timestamp || log.date + 'T12:00:00',
+            asset_id: log.asset_id,
+            work_type: log.work_type,
+            item_code: log.item_code,
+            quantity_today: log.quantity_today,
+            unit: log.unit,
+            crew_size: log.crew_size,
+            hash: log.hash || '',
+            photo: log.photo_base64
+        });
+
+        // Handle photos
+        if (log.photo_base64) {
+            workItem.photos.push(log.photo_base64);
+            assetWorkItems[log.asset_id].photos.push(log.photo_base64);
+            photos.push({
+                asset_id: log.asset_id,
+                work_type: log.work_type,
+                photo: log.photo_base64,
+                timestamp: log.timestamp || log.date + 'T12:00:00'
+            });
+        }
+    });
+
+    // Calculate cumulative and remaining for work items with targets
+    Object.keys(assetWorkItems).forEach(assetId => {
+        Object.keys(assetWorkItems[assetId].workItems).forEach(workItemKey => {
+            const workItem = assetWorkItems[assetId].workItems[workItemKey];
+
+            // Find the original work item to get target_total
+            const originalWorkItem = workItems.find(wi =>
+                wi.asset_id === assetId &&
+                (wi.item_code === workItem.item_code || wi.work_type === workItem.work_type)
+            );
+
+            if (originalWorkItem && originalWorkItem.target_total !== null) {
+                workItem.target_total = originalWorkItem.target_total;
+                workItem.cumulative = originalWorkItem.cumulative || 0;
+                workItem.remaining = Math.max(0, workItem.target_total - workItem.cumulative);
+                // Fix: Update unit from work item definition instead of using field log fallback
+                workItem.unit = originalWorkItem.unit || workItem.unit;
+            }
+        });
+    });
+
+    // Sort timeline by timestamp (most recent first)
+    timeline.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+    return {
+        totalEntries: dayLogs.length,
+        uniqueAssets: Array.from(uniqueAssets),
+        assetWorkItems: assetWorkItems,
+        photos: photos,
+        timeline: timeline.slice(0, 10) // Last 10 entries
+    };
+}
+
+// Update KPI cards
+function updateKPICards() {
+    if (!dailySummaryState.aggregatedData) return;
+
+    const data = dailySummaryState.aggregatedData;
+
+    document.getElementById('kpiActiveAssets').textContent = data.uniqueAssets.length;
+    document.getElementById('kpiWorkItems').textContent = Object.keys(data.assetWorkItems).reduce((total, assetId) => {
+        return total + Object.keys(data.assetWorkItems[assetId].workItems).length;
+    }, 0);
+    document.getElementById('kpiPhotos').textContent = data.photos.length;
+    document.getElementById('kpiEntries').textContent = data.totalEntries;
+}
+
+// Render asset accordions
+function renderAssetAccordions() {
+    const container = document.getElementById('assetAccordions');
+    if (!container || !dailySummaryState.aggregatedData) return;
+
+    container.innerHTML = '';
+
+    const assetWorkItems = dailySummaryState.aggregatedData.assetWorkItems;
+    const sortedAssetIds = Object.keys(assetWorkItems).sort((a, b) => {
+        const assetA = assetWorkItems[a].assetInfo;
+        const assetB = assetWorkItems[b].assetInfo;
+        return (assetA.name || assetA.asset_id).localeCompare(assetB.name || assetB.asset_id);
+    });
+
+    sortedAssetIds.forEach(assetId => {
+        const assetData = assetWorkItems[assetId];
+        const accordion = createAssetAccordion(assetId, assetData);
+        container.appendChild(accordion);
+    });
+}
+
+// Create asset accordion
+function createAssetAccordion(assetId, assetData) {
+    const asset = assetData.assetInfo;
+    const workItemCount = Object.keys(assetData.workItems).length;
+    const photoCount = assetData.photos.length;
+
+    const accordionDiv = document.createElement('div');
+    accordionDiv.className = 'asset-accordion';
+
+    accordionDiv.innerHTML = `
+        <div class="accordion-header" onclick="toggleAccordion(this)">
+            <div>
+                <strong>${asset.name || asset.asset_id}</strong>
+                <span style="color: #6b7280; font-size: 0.9rem;">(${formatAssetType(asset.asset_type || 'other')})</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 10px;">
+                <span style="color: #3b82f6;">${photoCount} photos</span>
+                <span style="color: #059669;">${workItemCount} work items</span>
+                <span class="accordion-arrow">▼</span>
+            </div>
+        </div>
+        <div class="accordion-content">
+            ${createWorkItemTable(assetId, assetData.workItems)}
+        </div>
+    `;
+
+    return accordionDiv;
+}
+
+// Create work item table
+function createWorkItemTable(assetId, workItems) {
+    const sortedWorkItems = Object.keys(workItems).sort();
+
+    let tableHTML = `
+        <table class="work-item-table daily-summary-table" style="table-layout: fixed; width: 720px !important; max-width: 720px !important; min-width: 720px !important; border-collapse: collapse; background-color: transparent !important; font-size: 0.95rem !important;">
+            <thead>
+                <tr style="height: auto !important;">
+                    <th style="width: 144px !important; max-width: 144px !important; min-width: 144px !important; background-color: #f8fafc !important; box-sizing: border-box !important; padding: 8px 6px !important; margin: 0px !important; font-size: 1rem !important; font-weight: 600 !important;">Work Item</th>
+                    <th style="width: 103px !important; max-width: 103px !important; min-width: 103px !important; background-color: #f8fafc !important; box-sizing: border-box !important; padding: 8px 6px !important; margin: 0px !important; font-size: 1rem !important; font-weight: 600 !important;">Qty Today</th>
+                    <th style="width: 173px !important; max-width: 173px !important; min-width: 173px !important; background-color: #f8fafc !important; box-sizing: border-box !important; padding: 8px 6px !important; margin: 0px !important; font-size: 1rem !important; font-weight: 600 !important;">Progress</th>
+                    <th style="width: 115px !important; max-width: 115px !important; min-width: 115px !important; background-color: #f8fafc !important; box-sizing: border-box !important; padding: 8px 6px !important; margin: 0px !important; font-size: 1rem !important; font-weight: 600 !important;">Photos</th>
+                    <th style="width: 121px !important; max-width: 121px !important; min-width: 121px !important; background-color: #f8fafc !important; box-sizing: border-box !important; padding: 8px 6px !important; margin: 0px !important; font-size: 1rem !important; font-weight: 600 !important;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+    `;
+
+    sortedWorkItems.forEach(workItemKey => {
+        const workItem = workItems[workItemKey];
+        const progressText = workItem.target_total ?
+            `${workItem.cumulative}/${workItem.target_total} ${workItem.unit} (${workItem.remaining} remaining)` :
+            `${workItem.cumulative} ${workItem.unit} (no target set)`;
+
+        tableHTML += `
+            <tr>
+                <td style="width: 144px !important; max-width: 144px !important; min-width: 144px !important; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; box-sizing: border-box !important; padding: 8px 6px !important; margin: 0px !important; font-size: 0.9rem !important;">
+                    ${workItem.item_code ? `<span class="work-item-code" style="font-size: 0.85rem !important;">${workItem.item_code}</span>` : ''}
+                    ${workItem.work_type}
+                </td>
+                <td style="width: 103px !important; max-width: 103px !important; min-width: 103px !important; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; box-sizing: border-box !important; padding: 8px 6px !important; margin: 0px !important; font-size: 0.9rem !important;" class="quantity-display">
+                    ${workItem.quantityDisplayTexts && workItem.quantityDisplayTexts.length > 0
+                        ? workItem.quantityDisplayTexts.slice(-3).join(', ') + (workItem.entries.length > 3 ? '...' : '')
+                        : `${workItem.totalQuantity} ${workItem.unit}`}
+                </td>
+                <td style="width: 173px !important; max-width: 173px !important; min-width: 173px !important; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; box-sizing: border-box !important; padding: 8px 6px !important; margin: 0px !important; font-size: 0.85rem !important;" class="progress-display">${progressText}</td>
+                <td style="width: 115px !important; max-width: 115px !important; min-width: 115px !important; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; box-sizing: border-box !important; padding: 12px 6px !important; margin: 0px !important; font-size: 0.9rem !important; height: auto !important; vertical-align: middle !important;">
+                    <div class="thumbnail-row" style="gap: 4px !important; display: flex !important; justify-content: center !important; align-items: center !important; min-height: 80px !important;">
+                        ${workItem.photos.slice(0, 2).map(photo =>
+                            `<img src="${photo}" style="width: 90px !important; height: 80px !important; border-radius: 8px !important; margin: 0 !important; cursor: pointer !important; border: 1px solid #e5e7eb !important; object-fit: cover !important;" onclick="openPhotoModal('${assetId}', '${workItemKey}', '${photo}')">`
+                        ).join('')}
+                        ${workItem.photos.length > 2 ? `<span style="font-size: 0.85rem; color: #6b7280; align-self: center !important;">+${workItem.photos.length - 2}</span>` : ''}
+                    </div>
+                </td>
+                <td style="width: 121px !important; max-width: 121px !important; min-width: 121px !important; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; box-sizing: border-box !important; padding: 8px 6px !important; margin: 0px !important;">
+                    <div class="action-buttons" style="display: flex !important; flex-direction: column !important; gap: 4px !important;">
+                        <button class="btn-xs" style="padding: 4px 6px !important; font-size: 0.75rem !important; border-radius: 4px !important; line-height: 1.2 !important;" onclick="viewWorkItemEntries('${assetId}', '${workItemKey}')">View Entries</button>
+                        <button class="btn-xs primary" style="padding: 4px 6px !important; font-size: 0.75rem !important; border-radius: 4px !important; line-height: 1.2 !important;" onclick="generateDayPDF('${assetId}', '${workItemKey}')">View PDF</button>
+                    </div>
+                </td>
+            </tr>
+        `;
+    });
+
+    tableHTML += `
+            </tbody>
+        </table>
+    `;
+
+    return tableHTML;
+}
+
+// Render timeline
+function renderTimeline() {
+    const container = document.getElementById('summaryTimeline');
+    if (!container || !dailySummaryState.aggregatedData) return;
+
+    container.innerHTML = '';
+
+    dailySummaryState.aggregatedData.timeline.forEach(entry => {
+        const timelineItem = createTimelineItem(entry);
+        container.appendChild(timelineItem);
+    });
+}
+
+// Create timeline item
+function createTimelineItem(entry) {
+    const item = document.createElement('div');
+    item.className = 'timeline-entry';
+
+    const time = new Date(entry.timestamp).toLocaleTimeString('en-US', {
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+    });
+
+    const shortHash = entry.hash ? entry.hash.substring(0, 8) + '...' : '';
+    const asset = getAsset(entry.asset_id);
+
+    item.innerHTML = `
+        <div class="timeline-time">${time}</div>
+        <div class="timeline-content">
+            <span class="timeline-asset">${asset ? (asset.name || asset.asset_id) : entry.asset_id}</span>
+            <span class="timeline-work">${entry.work_type}</span>
+            <span class="timeline-quantity">${entry.quantity_today || 0} ${entry.unit || 'pcs'}</span>
+            <span class="timeline-crew">${entry.crew_size || 0} crew</span>
+            <span class="timeline-hash">${shortHash}</span>
+        </div>
+        ${entry.photo ? `<img src="${entry.photo}" class="timeline-photo" onclick="openPhotoModal('${entry.asset_id}', '${entry.work_type}', '${entry.photo}')">` : ''}
+    `;
+
+    return item;
+}
+
+// Toggle accordion
+function toggleAccordion(header) {
+    header.classList.toggle('active');
+    const content = header.nextElementSibling;
+    content.classList.toggle('active');
+}
+
+// Show/hide no activity message
+function showNoActivity(show) {
+    const noActivityMsg = document.getElementById('noActivityMessage');
+    const assetAccordions = document.getElementById('assetAccordions');
+    const timeline = document.getElementById('summaryTimeline');
+    const kpiCards = document.getElementById('summaryKpiCards');
+
+    if (show) {
+        noActivityMsg.style.display = 'block';
+        assetAccordions.style.display = 'none';
+        timeline.style.display = 'none';
+
+        // Reset KPI cards to 0
+        document.getElementById('kpiActiveAssets').textContent = '0';
+        document.getElementById('kpiWorkItems').textContent = '0';
+        document.getElementById('kpiPhotos').textContent = '0';
+        document.getElementById('kpiEntries').textContent = '0';
+    } else {
+        noActivityMsg.style.display = 'none';
+        assetAccordions.style.display = 'block';
+        timeline.style.display = 'block';
+    }
+}
+
+// Download Daily Summary PDF
+function downloadDailySummaryPDF() {
+    if (!dailySummaryState.aggregatedData || dailySummaryState.aggregatedData.totalEntries === 0) {
+        alert('No data available for PDF generation');
+        return;
+    }
+
+    // Implementation would go here to generate PDF using pdf_local.js
+    // For now, show placeholder
+    const project = projects.find(p => p.project_id === dailySummaryState.selectedProject);
+    const projectName = project ? (project.contract || project.project_id) : dailySummaryState.selectedProject;
+
+    alert(`PDF Generation:\n\nProject: ${projectName}\nDate: ${dailySummaryState.selectedDate}\n\nThis feature will be implemented in the next task.`);
+}
+
+// Check if online
+function isOnline() {
+    return navigator.onLine;
+}
+
+// Helper functions (to be implemented)
+function openPhotoModal(assetId, workType, photo) {
+    // Implementation would reuse existing photo modal
+    console.log('Open photo modal:', assetId, workType, photo);
+}
+
+function viewWorkItemEntries(assetId, workItemKey) {
+    // Implementation would filter and show specific work item entries
+    console.log('View work item entries:', assetId, workItemKey);
+}
+
+function generateDayPDF(assetId, workItemKey) {
+    // Implementation would generate PDF for specific asset/work item day
+    console.log('Generate day PDF:', assetId, workItemKey);
 }
