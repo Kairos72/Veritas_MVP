@@ -5,11 +5,156 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Veritas MVP Demo</title>
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="style.css?v=2025112812">
     <link rel="manifest" href="manifest.json?v=202511245">
     <link rel="icon" href="./favicon.ico" type="image/x-icon">
     <!-- Supabase JS -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+    <!-- Daily Summary Compact CSS - INLINE TO BYPASS CACHE -->
+    <style>
+        .daily-summary-table {
+            width: 90% !important;
+            border-collapse: collapse !important;
+            border-spacing: 0 !important;
+            margin: 0px !important;
+            padding: 0px !important;
+            font-size: 0.8rem !important;
+            table-layout: fixed !important;
+            max-width: 90% !important;
+            overflow: hidden !important;
+            background-color: #ffff00 !important; /* YELLOW TEST to debug table width */
+            border: none !important;
+        }
+
+        .daily-summary-table th {
+            background: #f8fafc !important;
+            padding: 4px 1px !important;
+            text-align: left !important;
+            font-weight: 600 !important;
+            color: #374151 !important;
+            border-right: 1px solid #e5e7eb !important;
+            border-bottom: 1px solid #e5e7eb !important;
+            font-size: 0.75rem !important;
+            white-space: nowrap !important;
+        }
+
+        .daily-summary-table td {
+            padding: 4px 1px !important;
+            border-right: 1px solid #f3f4f6 !important;
+            border-bottom: 1px solid #f3f4f6 !important;
+            vertical-align: middle !important;
+            overflow: hidden !important;
+            line-height: 1.2 !important;
+            white-space: nowrap !important;
+            text-overflow: ellipsis !important;
+        }
+
+        .daily-summary-table th:last-child,
+        .daily-summary-table td:last-child {
+            border-right: none !important;
+        }
+
+        /* Force column widths for Daily Summary table - FIXED PIXEL WIDTHS - MAXIMUM SPECIFICITY */
+        #dailySummary .daily-summary-table th:nth-child(1),
+        #dailySummary .daily-summary-table td:nth-child(1) {
+            width: 20.16px !important;
+            max-width: 20.16px !important;
+            min-width: 20.16px !important;
+            box-sizing: border-box !important;
+        }
+        #dailySummary .daily-summary-table th:nth-child(2),
+        #dailySummary .daily-summary-table td:nth-child(2) {
+            width: 14.4px !important;
+            max-width: 14.4px !important;
+            min-width: 14.4px !important;
+            box-sizing: border-box !important;
+        }
+        #dailySummary .daily-summary-table th:nth-child(3),
+        #dailySummary .daily-summary-table td:nth-child(3) {
+            width: 18px !important;
+            max-width: 18px !important;
+            min-width: 18px !important;
+            box-sizing: border-box !important;
+        }
+        #dailySummary .daily-summary-table th:nth-child(4),
+        #dailySummary .daily-summary-table td:nth-child(4) {
+            width: 22.4px !important;
+            max-width: 22.4px !important;
+            min-width: 22.4px !important;
+            box-sizing: border-box !important;
+        }
+        #dailySummary .daily-summary-table th:nth-child(5),
+        #dailySummary .daily-summary-table td:nth-child(5) {
+            width: 20px !important;
+            max-width: 20px !important;
+            min-width: 20px !important;
+            box-sizing: border-box !important;
+        }
+
+        .daily-summary-table .action-buttons {
+            display: flex !important;
+            flex-direction: column !important;
+            gap: 3px !important;
+            align-items: flex-start !important;
+            justify-content: center !important;
+            flex-wrap: wrap !important;
+        }
+
+        .daily-summary-table .btn-xs {
+            padding: 2px 4px !important;
+            font-size: 0.6rem !important;
+            border-radius: 2px !important;
+            border-width: 1px !important;
+            line-height: 1.1 !important;
+            min-width: auto !important;
+            white-space: nowrap !important;
+            text-overflow: ellipsis !important;
+            max-width: 100% !important;
+            flex-shrink: 1 !important;
+            margin: 0 !important;
+        }
+
+        .daily-summary-table .thumbnail-small {
+            width: 18px !important;
+            height: 18px !important;
+            border-radius: 1px !important;
+            margin: 0px !important;
+            cursor: pointer !important;
+            border: 1px solid #e5e7eb !important;
+        }
+
+        .daily-summary-table .thumbnail-row {
+            gap: 2px !important;
+            align-items: center !important;
+            display: flex !important;
+            flex-wrap: wrap !important;
+        }
+
+        /* Remove padding from Daily Summary card to eliminate white space */
+        #dailySummary .card {
+            padding: 10px !important;
+            margin: 0 !important;
+        }
+
+        /* Remove padding from daily summary section header */
+        #dailySummary .section-header {
+            padding: 0 !important;
+            margin: 0 0 10px 0 !important;
+        }
+
+        /* Remove margins from daily summary form groups */
+        #dailySummary .form-group {
+            margin: 0 !important;
+            padding: 0 !important;
+        }
+
+        /* Remove padding from KPI cards container */
+        #dailySummary .kpi-cards {
+            padding: 0 !important;
+            margin: 0 0 10px 0 !important;
+        }
+    </style>
 </head>
 
 <body>
@@ -155,6 +300,7 @@
             <button class="tab-btn active" onclick="switchTab('assets')">Assets</button>
             <button class="tab-btn" onclick="switchTab('fieldEntry')">Field Entry Mode</button>
             <button class="tab-btn" onclick="switchTab('photoGallery')">Photo Gallery</button>
+            <button class="tab-btn" onclick="switchTab('dailySummary')">Daily Summary</button>
         </div>
 
   
@@ -623,6 +769,73 @@
                     <h3>No Photos Found</h3>
                     <p>No field photos match your current filters.</p>
                     <p>Try adjusting your filters or take some photos in Field Entry mode.</p>
+                </div>
+            </section>
+        </div>
+
+        <!-- Daily Summary Mode -->
+        <div id="dailySummary" class="tab-content" style="display: none;">
+            <section class="card">
+                <div class="section-header">
+                    <h2>Daily Summary</h2>
+                    <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                        <!-- Project Selector (reused) -->
+                        <div class="form-group" style="margin: 0; min-width: 200px;">
+                            <select id="summaryProjectSelect" style="width: 100%;">
+                                <option value="">-- Select Project --</option>
+                            </select>
+                        </div>
+                        <!-- Date Picker -->
+                        <div class="form-group" style="margin: 0; display: flex; align-items: center; gap: 5px;">
+                            <button id="prevDateBtn" class="btn secondary small">←</button>
+                            <input type="date" id="summaryDatePicker" style="width: 150px;">
+                            <button id="nextDateBtn" class="btn secondary small">→</button>
+                        </div>
+                        <!-- Sync/Refresh Button -->
+                        <button id="refreshSummaryBtn" class="btn secondary small">🔄 Refresh</button>
+                        <!-- PDF Export Button -->
+                        <button id="downloadSummaryPdfBtn" class="btn primary small">📄 Download PDF</button>
+                    </div>
+                </div>
+
+                <!-- KPI Cards -->
+                <div id="summaryKpiCards" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin: 20px 0;">
+                    <div class="kpi-card">
+                        <div class="kpi-value" id="kpiActiveAssets">0</div>
+                        <div class="kpi-label">Active Assets</div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="kpi-value" id="kpiWorkItems">0</div>
+                        <div class="kpi-label">Work Items Touched</div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="kpi-value" id="kpiPhotos">0</div>
+                        <div class="kpi-label">Photos Today</div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="kpi-value" id="kpiEntries">0</div>
+                        <div class="kpi-label">Field Entries</div>
+                    </div>
+                </div>
+
+                <!-- No Activity Message -->
+                <div id="noActivityMessage" style="display: none; text-align: center; padding: 40px; color: #666;">
+                    <h3>No Activity Today</h3>
+                    <p>No field entries found for this date.</p>
+                    <button class="btn primary" onclick="switchTab('fieldEntry')">Open Field Entry</button>
+                </div>
+
+                <!-- Per-Asset Accordions -->
+                <div id="assetAccordions" style="margin: 20px 0;">
+                    <!-- Asset accordions will be populated here -->
+                </div>
+
+                <!-- Timeline -->
+                <div class="timeline-section">
+                    <h3>Recent Activity (Last 10 Entries)</h3>
+                    <div id="summaryTimeline" class="timeline-list">
+                        <!-- Timeline entries will be populated here -->
+                    </div>
                 </div>
             </section>
         </div>

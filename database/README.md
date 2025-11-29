@@ -1,4 +1,8 @@
-# Database Setup for Assets & Work Items
+# Database Schema and Migrations
+
+## Overview
+
+This directory contains database schema definitions, migration scripts, and documentation for the Veritas MVP system. The database uses PostgreSQL with Supabase for cloud synchronization.
 
 ## Quick Setup
 
@@ -8,68 +12,79 @@ The Assets & Work Items system requires database tables in Supabase. Follow thes
 
 1. Go to your Supabase project dashboard
 2. Navigate to **SQL Editor**
-3. Copy and paste the contents of `supabase_assets_schema.sql`
+3. Copy and paste the contents of `correct_migration.sql`
 4. Click **Run** to execute the script
 
 This will create:
-- `assets` table - for storing infrastructure assets
-- `work_items` table - for storing measurable tasks within assets
-- Proper indexes, RLS policies, and triggers
+- `quantity_text` column in `field_logs` table for complete quantity preservation
+- Proper data migration for existing records
+- Verification queries to confirm successful migration
 
-### 2. Verify Tables Created
+Note: The main database schema (assets, work_items, projects tables) should already be set up in your Supabase project. This migration specifically adds the critical `quantity_text` column for Task 19 data integrity fixes.
 
-After running the script, you should see these tables in your Supabase database:
-- `assets`
-- `work_items`
-- `asset_progress_summary` (view)
+### 2. Verify Migration Success
+
+After running the migration script, verify the changes:
+
+1. Check the new column exists:
+```sql
+SELECT column_name, data_type
+FROM information_schema.columns
+WHERE table_name = 'field_logs'
+AND column_name = 'quantity_text';
+```
+
+2. Verify data was migrated (if you had existing field logs):
+```sql
+SELECT COUNT(*) as total_records,
+       COUNT(CASE WHEN quantity_text IS NOT NULL THEN 1 END) as records_with_quantity_text
+FROM field_logs;
+```
+
+3. Test the functionality in the Veritas PWA - quantities should now preserve unit information during sync.
 
 ### 3. Test the System
 
 Refresh your Veritas PWA page. The sync should now work without errors and you'll be able to:
-- Create assets and work items
-- Sync them with Supabase
-- Import/export assets and work items
+- Preserve unit information during sync (e.g., "5 cubic meters" stays "5 cubic meters")
+- Sync field entries without data loss
+- View proper quantity text in Daily Summary dashboard
 
-## What the Schema Includes
+## Files in This Directory
 
-### Assets Table
-- All asset types (road_section, building, flood_control, etc.)
-- Location and dimension fields
-- GPS coordinates support
-- Chainage support for linear infrastructure
-- Migration tracking fields
+### Essential Files:
+- **`correct_migration.sql`** - ✅ **USE THIS ONE** - Production-ready migration script for Task 19 quantity preservation fixes
+- **`migrate_quantity_text.py`** - Python automation tool for running migrations (for developers)
+- **`README.md`** - This documentation file
 
-### Work Items Table
-- Work item details (type, item code, unit)
-- Progress tracking (target, cumulative, remaining)
-- Status and priority management
-- Automatic progress calculations
+### Migration History:
+- **Task 19 (Nov 2025)**: Added `quantity_text` column to fix critical sync data loss bug
+- Database now preserves complete user input during sync operations
+- Maintains backward compatibility with existing data
 
-### Security
-- Row Level Security (RLS) enabled
-- Users can only access their own assets
-- Project-based access control
-- Automatic timestamp updates
+### Important Notes:
+- Only use `correct_migration.sql` - other migration files were removed as they referenced non-existent database columns
+- The migration is safe and includes verification queries
+- All existing data is preserved during the migration process
 
 ## Troubleshooting
 
-### Sync Error: "Could not find the table 'public.assets'"
-This means the database tables haven't been created yet. Run the SQL script in Supabase.
+### Sync Error: "Could not find the 'quantity_text' column"
+This means the migration hasn't been run yet. Run `correct_migration.sql` in your Supabase SQL Editor.
 
-### Other Errors
-- Make sure you're logged into Supabase
-- Check that your Supabase URL and anon key are correct in `config.js`
-- Verify the SQL script executed successfully
+### Common Issues:
+- **Make sure you're logged into Supabase** with proper permissions
+- **Check your Supabase URL and anon key** in `pwa/config.js`
+- **Verify the migration script executed successfully** using the verification queries above
+- **Test with a new field entry** to ensure quantity text is preserved
 
-## Migration from Legacy Segments
+### Task 19 Related Issues:
+- If units still show as "pcs" after sync, verify the `quantity_text` column was created
+- If asset names show as "undefined", check asset sync normalization (see CLAUDE.md)
+- Daily Summary dropdown should show "PROJ-1 - Project Name" format
 
-Use the migration tool to convert existing segments to assets:
-```bash
-python tools/migrate_segments_to_assets.py
-```
+## Related Documentation
 
-This will:
-- Convert segments to Road Section assets
-- Create PCCP work items from block data
-- Preserve all field logs
-- Create a backup before migration
+- **[CLAUDE.md](../CLAUDE.md)** - Complete system documentation and Task 19 fixes
+- **[Operator Reports](../docs/operator_reports/)** - Comprehensive Task 19 implementation documentation
+- **[Migration Tools](../tools/)** - Legacy data conversion utilities

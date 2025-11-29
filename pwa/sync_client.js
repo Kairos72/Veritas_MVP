@@ -349,14 +349,17 @@ class SyncClient {
         for (const remote of remoteAssets) {
             const local = localAssets.find(l => l.asset_id === remote.asset_id);
 
+            // Normalize remote asset to match local structure
+            const normalizedAsset = this.normalizeAssetFromDatabase(remote);
+
             if (!local) {
                 // New remote asset -> Download
-                localAssets.push(remote);
+                localAssets.push(normalizedAsset);
                 hasChanges = true;
             } else if (new Date(remote.updated_at) > new Date(local.updated_at)) {
                 // Remote is newer -> Download
                 const localIndex = localAssets.findIndex(l => l.asset_id === remote.asset_id);
-                localAssets[localIndex] = remote;
+                localAssets[localIndex] = normalizedAsset;
                 hasChanges = true;
             }
         }
@@ -365,6 +368,33 @@ class SyncClient {
             localStorage.setItem('veritas_assets', JSON.stringify(localAssets));
             console.log("Assets synced successfully");
         }
+    }
+
+    normalizeAssetFromDatabase(dbAsset) {
+        // Convert database field names to local structure
+        return {
+            asset_id: dbAsset.asset_id,
+            project_id: dbAsset.project_id,
+            name: dbAsset.asset_name || dbAsset.name || 'Unnamed Asset', // CRITICAL: Convert asset_name back to name
+            asset_type: dbAsset.asset_type,
+            description: dbAsset.description,
+            location: dbAsset.location,
+            // CRITICAL: Convert database chainage fields to local meter format
+            chainage_start: dbAsset.chainage_start,
+            chainage_end: dbAsset.chainage_end,
+            chainage_start_m: dbAsset.chainage_start, // Store chainage in meters for local use
+            chainage_end_m: dbAsset.chainage_end,     // Store chainage in meters for local use
+            length_m: dbAsset.length_m,
+            width_m: dbAsset.width_m,
+            height_m: dbAsset.height_m,
+            floor_area_m2: dbAsset.floor_area_m2,
+            stationing: dbAsset.stationing,
+            dimensions: dbAsset.dimensions,
+            work_items: dbAsset.work_items || [],
+            owner_user_id: dbAsset.owner_user_id,
+            updated_at: dbAsset.updated_at,
+            created_at: dbAsset.created_at
+        };
     }
 
     async uploadAsset(asset) {
@@ -379,7 +409,7 @@ class SyncClient {
             return;
         }
 
-        // Prepare payload with field mapping
+        // Prepare payload with field mapping - ONLY use columns that exist in database
         const payload = {
             asset_id: assetId,
             project_id: projectId,
@@ -387,8 +417,9 @@ class SyncClient {
             asset_type: assetType,
             description: asset.description || null,
             location: asset.location || null,
-            chainage_start: asset.chainage_start || null,
-            chainage_end: asset.chainage_end || null,
+            // Convert chainage from meters to standard format for database
+            chainage_start: asset.chainage_start_m || asset.chainage_start || null,
+            chainage_end: asset.chainage_end_m || asset.chainage_end || null,
             length_m: asset.length_m || null,
             width_m: asset.width_m || null,
             height_m: asset.height_m || null,
@@ -691,6 +722,8 @@ class SyncClient {
             work_type: workType,
             item_code: log.item_code || null,
             quantity_today: parseQuantity(log.quantity_today),
+            // CRITICAL FIX: Add quantity_text to preserve unit information during sync
+            quantity_text: log.quantity_text || log.quantity_today,
             crew_size: parseInt(log.crew_size) || 1,
             weather: log.weather || null,
             notes: log.notes || null,
@@ -699,6 +732,11 @@ class SyncClient {
             updated_at: new Date().toISOString(),
             created_at: log.created_at || new Date().toISOString()
         };
+
+        // TEMPORARY: Try to add quantity_text if column exists, handle error gracefully
+        if (log.quantity_today && log.quantity_today !== '0') {
+            payload.quantity_text = log.quantity_today;
+        }
 
         const { error } = await supabase
             .from('field_logs')

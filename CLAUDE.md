@@ -113,8 +113,8 @@ Uses Supabase for authentication and data sync. Configuration in `config.js` req
 - `POST /provenance`: Create provenance PDF from shift logs
 - `GET /output/<filename>`: Serve generated PDF files
 
-### Current State (November 2025 - Production Ready)
-- **Universal Infrastructure System**: Clean UI with **Assets**, Field Entry, and Photo Gallery tabs
+### Current State (November 2025 - Production Ready with Critical Updates)
+- **Universal Infrastructure System**: Clean UI with **Assets**, Field Entry, **Daily Summary**, and Photo Gallery tabs
 - **Universal Asset Management**: Supports 8+ asset types (road_section, building, flood_control, bridge, culvert, utility, landscaping, other)
 - **Intelligent Work Item Matching**: Smart algorithm matches field entries by item_code → work_type → auto-creates
 - **Asset Templates**: Pre-built templates for roads, buildings, and flood control with common work items
@@ -128,14 +128,36 @@ Uses Supabase for authentication and data sync. Configuration in `config.js` req
 - **Simulation Engine**: Retained for internal testing, QA, and demos (toggle via `CONFIG.ENABLE_SIMULATION_UI`)
 - **Mobile Optimized**: Responsive design with touch-friendly controls and horizontal photo detail layouts
 - **Field Provenance**: Cryptographic PDF generation with SHA-256 verification
+- **Daily Summary Reports**: Comprehensive supervisory dashboard with KPI tracking and PDF export
+- **Data Integrity**: Mission-critical fixes ensuring unit information preservation during sync operations
 - **Schema & Examples**: Complete JSON schema documentation with examples for all asset types and field logs
 - **Migration Tools**: Complete migration scripts to convert legacy segments and blocks to assets
+- **Database Migrations**: Production-ready schema updates with verification and rollback capabilities
 - **Automated Testing**: Professional-grade Playwright test suite for end-to-end browser automation
 - **Code Quality**: Cleaned temporary files, test artifacts, and backup files for production-ready repository
+- **Operator Documentation**: Comprehensive reports in `docs/operator_reports/` for system maintenance and knowledge transfer
 
 ## Recent Development Updates (November 2025)
 
-### PDF Layout Enhancement (Latest)
+### Task 19: Critical Data Integrity & Daily Summary Implementation (Latest)
+- **Mission-Critical Sync Bug Fix**: Eliminated unit information loss during logout/login cycles
+  - Added `quantity_text` column to `field_logs` database table for complete quantity preservation
+  - Fixed sync logic to maintain original user input (e.g., "5 cubic meters" stays "5 cubic meters")
+  - Database schema migration with production-ready scripts (`database/correct_migration.sql`)
+- **Asset Metadata Display Fix**: Resolved asset names showing as "undefined" and locations as "null - null"
+  - Implemented `normalizeAssetFromDatabase()` function for proper field mapping
+  - Fixed chainage and dimension field preservation during sync operations
+  - Ensured consistent asset display across all UI components
+- **Daily Summary View Feature**: New supervisory dashboard for at-a-glance project insights
+  - Mobile-first responsive design with KPI cards and asset accordions
+  - Offline-capable daily progress aggregation with real-time sync
+  - Integrated PDF generation with SHA-256 verification for daily reports
+  - Per-project/per-date timeline with photo thumbnails and activity tracking
+- **User Interface Consistency**: Fixed project dropdown display in Daily Summary
+  - Corrected field priority logic to show proper project names ("PROJ-1 - Cabaluay Bypass Road")
+  - Standardized display formatting across all project selection components
+
+### PDF Layout Enhancement
 - **Fixed Critical Bugs**: Resolved both local and server PDF generation errors
 - **Missing Function Fix**: Added getWorkItem function to app.js for PDF compatibility
 - **API URL Correction**: Changed from 192.168.1.56:5000 to localhost:5000 for local development
@@ -151,11 +173,13 @@ Uses Supabase for authentication and data sync. Configuration in `config.js` req
 - **Temporary Files**: Removed debug_tabs.html, test_tabs.html, test_simple.html, unregister_sw.js
 - **Backup Files**: Removed app_backup.js, app_clean.js, app_fixed_start.js, app_old.js
 - **Production Ready**: Repository now contains only essential code and documentation
+- **Operator Reports**: Added comprehensive documentation in `docs/operator_reports/` for system maintenance
 
 ### Schema & Migration Infrastructure
 - **Asset Schema**: Complete JSON schema (`engine/schema/asset.schema.json`) defining universal asset structure
 - **Examples**: Concrete examples for road_section, building, flood_control assets and field logs
 - **Migration Tools**: Scripts to convert legacy segments and blocks to new asset architecture
+- **Database Migrations**: Production-ready migration scripts with verification and rollback capabilities
 - **Testing Utilities**: Block parsing and migration validation tools
 
 ## Development Notes
@@ -165,10 +189,13 @@ Uses Supabase for authentication and data sync. Configuration in `config.js` req
 - **Progress Handling**: Work items now support null target_total values with clean display formatting
 - **Photo Integration**: GPS coordinates properly converted to numbers for PDF positioning
 - **Asset Architecture**: New universal system supports any infrastructure type, not just roads
+- **Data Integrity**: Critical sync bug fixes ensure complete preservation of unit information and asset metadata
+- **Daily Summary**: New supervisory dashboard providing at-a-glance project insights with PDF export capabilities
 - All data models follow the JSON schemas in `/engine/schema/` (see `asset.schema.json` for new architecture)
 - **Universal Asset System**: The system now uses Assets & Work Items instead of road-specific segments
 - **Work Item Matching**: Intelligent 3-step algorithm (item_code → work_type → auto-create) for seamless field entry
 - **Flexible Units**: Support for blocks, meters, linear meters, square meters, cubic meters, pieces, kg, tons, and custom units
+- **Unit Preservation**: Original quantity text (e.g., "5 cubic meters") maintained through complete sync cycle
 - **Chainage Support**: Full support for linear infrastructure with chainage parsing (e.g., "0+000" → 0 meters)
 - **Asset Templates**: Road, Building, and Flood Control templates with pre-configured work items
 - **Progress Calculation**: Real-time progress at work item and asset levels with status tracking
@@ -180,3 +207,6 @@ Uses Supabase for authentication and data sync. Configuration in `config.js` req
 - **Legacy Compatibility**: All existing segment data continues to work seamlessly
 - Developer toggle in `config.js` controls Simulation Mode visibility (default: hidden)
 - **Playwright Testing**: Automated browser testing framework for QA and workflow validation - critical development tool
+- **Database Schema**: Updated with `quantity_text` column for complete quantity preservation during sync operations
+- **Asset Display**: Fixed metadata rendering issues ensuring proper name and location display across all components
+- **Documentation**: Comprehensive operator reports available in `docs/operator_reports/` for system maintenance
