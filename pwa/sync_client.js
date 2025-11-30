@@ -309,6 +309,8 @@ class SyncClient {
 
     async syncAssets() {
         const localAssets = JSON.parse(localStorage.getItem('veritas_assets') || '[]');
+        const deletedAssets = JSON.parse(localStorage.getItem('veritas_deleted_assets') || '[]');
+        const pendingCloudDeletions = JSON.parse(localStorage.getItem('veritas_pending_cloud_deletions') || '[]');
 
         // Check if assets table exists in Supabase
         const { data: tableCheck, error: tableError } = await supabase
@@ -348,19 +350,47 @@ class SyncClient {
         // Download remote assets that are newer or missing locally
         for (const remote of remoteAssets) {
             const local = localAssets.find(l => l.asset_id === remote.asset_id);
+            const deleted = deletedAssets.find(d => d.asset_id === remote.asset_id);
 
             // Normalize remote asset to match local structure
             const normalizedAsset = this.normalizeAssetFromDatabase(remote);
 
-            if (!local) {
+            if (!local && !deleted) {
                 // New remote asset -> Download
                 localAssets.push(normalizedAsset);
                 hasChanges = true;
-            } else if (new Date(remote.updated_at) > new Date(local.updated_at)) {
-                // Remote is newer -> Download
-                const localIndex = localAssets.findIndex(l => l.asset_id === remote.asset_id);
-                localAssets[localIndex] = normalizedAsset;
-                hasChanges = true;
+            } else if (!local && deleted) {
+                // Asset was deleted locally - handle based on deletion reason
+                if (deleted.deletion_reason === 'accidental') {
+                    // Asset was accidentally deleted - restore from cloud
+                    console.log(`Restoring accidentally deleted asset: ${remote.asset_id}`);
+                    localAssets.push(normalizedAsset);
+
+                    // Remove from deleted assets since we're restoring
+                    const deletedIndex = deletedAssets.findIndex(d => d.asset_id === remote.asset_id);
+                    if (deletedIndex >= 0) {
+                        deletedAssets.splice(deletedIndex, 1);
+                        localStorage.setItem('veritas_deleted_assets', JSON.stringify(deletedAssets));
+                    }
+
+                    hasChanges = true;
+                } else {
+                    // Asset was intentionally deleted - check if cloud deletion is requested
+                    if (deleted.cloud_delete_requested) {
+                        console.log(`Deleting asset from cloud: ${remote.asset_id}`);
+                        await this.deleteAssetFromCloud(remote.asset_id);
+                    } else {
+                        // Asset marked for deletion but cloud deletion not yet requested
+                        console.log(`Asset ${remote.asset_id} marked for local deletion, skipping cloud restore`);
+                    }
+                }
+            } else if (local && new Date(remote.updated_at) > new Date(local.updated_at)) {
+                // Remote is newer -> Download (but only if not deleted locally)
+                if (!deleted) {
+                    const localIndex = localAssets.findIndex(l => l.asset_id === remote.asset_id);
+                    localAssets[localIndex] = normalizedAsset;
+                    hasChanges = true;
+                }
             }
         }
 
@@ -368,11 +398,85 @@ class SyncClient {
             localStorage.setItem('veritas_assets', JSON.stringify(localAssets));
             console.log("Assets synced successfully");
         }
+
+        // Process pending cloud deletions
+        if (pendingCloudDeletions.length > 0) {
+            console.log('Processing pending cloud deletions:', pendingCloudDeletions);
+
+            for (const assetId of pendingCloudDeletions) {
+                try {
+                    const deleted = await this.deleteAssetFromCloud(assetId);
+                    if (deleted) {
+                        console.log(`✅ Successfully deleted ${assetId} from cloud`);
+                    }
+                } catch (error) {
+                    console.error(`❌ Failed to delete ${assetId} from cloud:`, error);
+                }
+            }
+
+            // Clear pending deletions (whether successful or not)
+            localStorage.setItem('veritas_pending_cloud_deletions', JSON.stringify([]));
+        }
+    }
+
+    // Delete asset permanently from cloud
+    async deleteAssetFromCloud(assetId) {
+        try {
+            console.log(`Permanently deleting asset ${assetId} from cloud...`);
+
+            // Delete from assets table
+            const { error: assetError } = await supabase
+                .from('assets')
+                .delete()
+                .eq('asset_id', assetId);
+
+            if (assetError) {
+                console.error('Failed to delete asset from cloud:', assetError);
+                return false;
+            }
+
+            // Delete associated work items
+            const { error: workItemsError } = await supabase
+                .from('work_items')
+                .delete()
+                .eq('asset_id', assetId);
+
+            if (workItemsError) {
+                console.warn('Failed to delete work items from cloud:', workItemsError);
+                // Continue anyway - main asset deletion succeeded
+            }
+
+            // Delete associated field logs
+            const { error: fieldLogsError } = await supabase
+                .from('field_logs')
+                .delete()
+                .eq('asset_id', assetId);
+
+            if (fieldLogsError) {
+                console.warn('Failed to delete field logs from cloud:', fieldLogsError);
+                // Continue anyway - main asset deletion succeeded
+            }
+
+            console.log(`Asset ${assetId} permanently deleted from cloud`);
+
+            // Remove from local deleted assets since cloud deletion is complete
+            const deletedAssets = JSON.parse(localStorage.getItem('veritas_deleted_assets') || '[]');
+            const deletedIndex = deletedAssets.findIndex(d => d.asset_id === assetId);
+            if (deletedIndex >= 0) {
+                deletedAssets[deletedIndex].cloud_deleted_at = new Date().toISOString();
+                localStorage.setItem('veritas_deleted_assets', JSON.stringify(deletedAssets));
+            }
+
+            return true;
+        } catch (error) {
+            console.error('Error deleting asset from cloud:', error);
+            return false;
+        }
     }
 
     normalizeAssetFromDatabase(dbAsset) {
         // Convert database field names to local structure
-        return {
+        const normalizedAsset = {
             asset_id: dbAsset.asset_id,
             project_id: dbAsset.project_id,
             name: dbAsset.asset_name || dbAsset.name || 'Unnamed Asset', // CRITICAL: Convert asset_name back to name
@@ -390,11 +494,30 @@ class SyncClient {
             floor_area_m2: dbAsset.floor_area_m2,
             stationing: dbAsset.stationing,
             dimensions: dbAsset.dimensions,
-            work_items: dbAsset.work_items || [],
             owner_user_id: dbAsset.owner_user_id,
             updated_at: dbAsset.updated_at,
             created_at: dbAsset.created_at
         };
+
+        // CRITICAL FIX: Preserve work item progress from local array
+        // Database work_items only has structure, but local work_items has actual progress
+        const localWorkItems = JSON.parse(localStorage.getItem('veritas_work_items') || '[]');
+        const assetWorkItemsFromDB = dbAsset.work_items || [];
+
+        // Merge database structure with local progress
+        normalizedAsset.work_items = assetWorkItemsFromDB.map(dbWorkItem => {
+            const localWorkItem = localWorkItems.find(wi => wi.work_item_id === dbWorkItem.work_item_id);
+
+            if (localWorkItem) {
+                // Use local work item (has correct progress)
+                return localWorkItem;
+            } else {
+                // Use database work item (no progress yet)
+                return dbWorkItem;
+            }
+        });
+
+        return normalizedAsset;
     }
 
     async uploadAsset(asset) {
@@ -557,12 +680,21 @@ class SyncClient {
     async syncFieldLogs() {
         const localLogs = JSON.parse(localStorage.getItem('veritas_field_logs') || '[]');
 
-        // Get remote logs
+        
+        // Get remote logs (excluding photo_base64 to avoid 406 errors)
         const { data: remoteLogs, error } = await supabase
             .from('field_logs')
-            .select('*');
+            .select('entry_id, date, project_id, asset_id, work_item_id, work_type, item_code, quantity_today, quantity_text, crew_size, weather, notes, created_at, updated_at');
 
-        if (error) throw error;
+        if (error) {
+            console.error('❌ Sync error details:', {
+                message: error.message,
+                code: error.code,
+                details: error.details,
+                hint: error.hint
+            });
+            throw error;
+        }
 
         let hasChanges = false;
 
@@ -666,11 +798,30 @@ class SyncClient {
         }
     }
 
+    // Protect cloud photos from local deletion
+    async protectCloudPhotos(localLog, remoteLog) {
+        // If remote has photo and local doesn't (due to storage cleanup), preserve remote photo
+        if (remoteLog && remoteLog.photo_base64 && !localLog.photo_base64) {
+            console.log(`Protecting cloud photo for log ${localLog.entry_id} from local deletion`);
+            return {
+                ...localLog,
+                photo_base64: remoteLog.photo_base64
+            };
+        }
+        return localLog;
+    }
+
     async uploadLog(log) {
         // Check if user is still available
         if (!currentUser) {
             console.error("Cannot upload log: No current user");
             return;
+        }
+
+        // Check if this log had photos removed due to storage cleanup
+        if (log.photo_removed_emergency || log.photo_removed_for_space) {
+            console.log(`Skipping cloud sync for log ${log.entry_id} - photo was removed due to storage constraints`);
+            return; // Don't sync photo deletions to cloud
         }
 
         // Field mapping and validation
@@ -713,6 +864,40 @@ class SyncClient {
             return 0;
         };
 
+        // Check if we should sync photo_base64 to cloud
+        let photoToSync = null;
+        if (log.photo_base64) {
+            // Local has photo - sync it to cloud
+            photoToSync = log.photo_base64;
+        } else if (!log.photo_removed_emergency && !log.photo_removed_for_space) {
+            // Only check cloud photo if we're preserving existing photos
+            // AND this is a photo-related sync (not just regular field entry)
+            // Skip unnecessary cloud photo queries for text-only entries
+            // Only check for cloud photos if we know this is a photo-related entry
+            // For text-only entries (photo_base64: null), don't make unnecessary queries
+            if (log.photo_base64 === null) {
+                // This is a text-only entry, no need to check cloud photos
+                photoToSync = null;
+            } else {
+                // This might be a photo entry that was cleared, check cloud
+                try {
+                    const { data: remoteLog } = await supabase
+                        .from('field_logs')
+                        .select('photo_base64')
+                        .eq('entry_id', entryId)
+                        .single();
+
+                    if (remoteLog && remoteLog.photo_base64) {
+                        console.log(`Preserving existing cloud photo for log ${entryId}`);
+                        photoToSync = remoteLog.photo_base64;
+                    }
+                } catch (error) {
+                    // Remote log doesn't exist or other error - continue with null
+                    console.log(`No existing cloud photo found for log ${entryId}`);
+                }
+            }
+        }
+
         const payload = {
             entry_id: entryId,
             project_id: projectId,
@@ -727,7 +912,7 @@ class SyncClient {
             crew_size: parseInt(log.crew_size) || 1,
             weather: log.weather || null,
             notes: log.notes || null,
-            photo_base64: log.photo_base64 || null,
+            photo_base64: photoToSync, // Only sync if photo wasn't intentionally deleted
             owner_user_id: currentUser.id,
             updated_at: new Date().toISOString(),
             created_at: log.created_at || new Date().toISOString()
