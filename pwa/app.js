@@ -1380,11 +1380,15 @@ window.addWorkItem = function () {
                     <input type="number" class="work-item-target" step="0.01" placeholder="0">
                 </div>
             </div>
-            <button type="button" onclick="this.parentElement.parentElement.remove()" style="background: #ef4444; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer;">Remove</button>
+            <button type="button" onclick="this.closest('.work-item-row').remove()" style="background: #ef4444; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer;">Remove</button>
         </div>
     `;
 
-    const workItemsList = document.getElementById('workItemsList');
+      const workItemsList = document.getElementById('workItemsList');
+    if (!workItemsList) {
+        console.error('❌ workItemsList element not found!');
+        return;
+    }
     workItemsList.insertAdjacentHTML('beforeend', workItemHtml);
 };
 
@@ -3082,10 +3086,85 @@ This action cannot be undone!
     // Remove from array
     const index = fieldLogs.findIndex(log => log.entry_id === entryId);
     if (index !== -1) {
+        // Get the deleted log data before removing
+        const deletedLog = fieldLogs[index];
+
         fieldLogs.splice(index, 1);
+
+        // 🎯 CRITICAL FIX: Recalculate work item cumulative values after deletion
+        console.log('🔄 Recalculating work items after field log deletion...');
+
+        // Get work item for the deleted log
+        const affectedWorkItem = workItems.find(wi =>
+            wi.work_item_id === deletedLog.work_item_id ||
+            (wi.item_code === deletedLog.item_code && wi.asset_id === deletedLog.asset_id)
+        );
+
+        if (affectedWorkItem) {
+            console.log(`📝 Updating work item ${affectedWorkItem.work_item_id} after deletion`);
+
+            // Calculate new cumulative from remaining field logs
+            let newCumulative = 0;
+            const remainingLogs = fieldLogs.filter(log =>
+                log.work_item_id === affectedWorkItem.work_item_id ||
+                (log.item_code === affectedWorkItem.item_code && log.asset_id === affectedWorkItem.asset_id)
+            );
+
+            remainingLogs.forEach(log => {
+                const qty = parseFloat(log.quantity_today) || 0;
+                if (!isNaN(qty)) {
+                    newCumulative += qty;
+                }
+            });
+
+            // Calculate new remaining if target is set
+            const newRemaining = affectedWorkItem.target_total ?
+                Math.max(0, affectedWorkItem.target_total - newCumulative) : null;
+
+            // Update status based on progress
+            let newStatus = 'pending';
+            if (newCumulative > 0 && affectedWorkItem.target_total) {
+                const progress = (newCumulative / affectedWorkItem.target_total) * 100;
+                if (progress >= 100) {
+                    newStatus = 'completed';
+                } else {
+                    newStatus = 'in_progress';
+                }
+            } else if (newCumulative > 0) {
+                newStatus = 'in_progress';
+            }
+
+            // Update global work item array
+            const globalWorkItemIndex = workItems.findIndex(wi => wi.work_item_id === affectedWorkItem.work_item_id);
+            if (globalWorkItemIndex !== -1) {
+                workItems[globalWorkItemIndex].cumulative = newCumulative;
+                workItems[globalWorkItemIndex].remaining = newRemaining;
+                workItems[globalWorkItemIndex].status = newStatus;
+                console.log(`✅ Updated global work item: cumulative=${newCumulative}, remaining=${newRemaining}, status=${newStatus}`);
+            }
+
+            // Update work item inside asset if it exists
+            const asset = getAsset(deletedLog.asset_id);
+            if (asset && asset.work_items) {
+                const assetWorkItem = asset.work_items.find(wi => wi.work_item_id === affectedWorkItem.work_item_id);
+                if (assetWorkItem) {
+                    assetWorkItem.cumulative = newCumulative;
+                    assetWorkItem.remaining = newRemaining;
+                    assetWorkItem.status = newStatus;
+                    console.log(`✅ Updated asset work item`);
+                }
+            }
+
+            // Re-render assets table to show updated progress
+            renderAssets();
+        }
 
         // Save to localStorage
         await saveFieldLogs();
+        await saveWorkItems();
+        if (getAsset(deletedLog.asset_id)) {
+            saveAssets();
+        }
 
         // Re-render the table
         renderFieldLogs();
@@ -3156,10 +3235,85 @@ This will delete from:
         // Remove from local array
         const index = fieldLogs.findIndex(log => log.entry_id === entryId);
         if (index !== -1) {
+            // Get the deleted log data before removing
+            const deletedLog = fieldLogs[index];
+
             fieldLogs.splice(index, 1);
+
+            // 🎯 CRITICAL FIX: Recalculate work item cumulative values after deletion
+            console.log('🔄 Recalculating work items after field log deletion (everywhere)...');
+
+            // Get work item for the deleted log
+            const affectedWorkItem = workItems.find(wi =>
+                wi.work_item_id === deletedLog.work_item_id ||
+                (wi.item_code === deletedLog.item_code && wi.asset_id === deletedLog.asset_id)
+            );
+
+            if (affectedWorkItem) {
+                console.log(`📝 Updating work item ${affectedWorkItem.work_item_id} after deletion (everywhere)`);
+
+                // Calculate new cumulative from remaining field logs
+                let newCumulative = 0;
+                const remainingLogs = fieldLogs.filter(log =>
+                    log.work_item_id === affectedWorkItem.work_item_id ||
+                    (log.item_code === affectedWorkItem.item_code && log.asset_id === affectedWorkItem.asset_id)
+                );
+
+                remainingLogs.forEach(log => {
+                    const qty = parseFloat(log.quantity_today) || 0;
+                    if (!isNaN(qty)) {
+                        newCumulative += qty;
+                    }
+                });
+
+                // Calculate new remaining if target is set
+                const newRemaining = affectedWorkItem.target_total ?
+                    Math.max(0, affectedWorkItem.target_total - newCumulative) : null;
+
+                // Update status based on progress
+                let newStatus = 'pending';
+                if (newCumulative > 0 && affectedWorkItem.target_total) {
+                    const progress = (newCumulative / affectedWorkItem.target_total) * 100;
+                    if (progress >= 100) {
+                        newStatus = 'completed';
+                    } else {
+                        newStatus = 'in_progress';
+                    }
+                } else if (newCumulative > 0) {
+                    newStatus = 'in_progress';
+                }
+
+                // Update global work item array
+                const globalWorkItemIndex = workItems.findIndex(wi => wi.work_item_id === affectedWorkItem.work_item_id);
+                if (globalWorkItemIndex !== -1) {
+                    workItems[globalWorkItemIndex].cumulative = newCumulative;
+                    workItems[globalWorkItemIndex].remaining = newRemaining;
+                    workItems[globalWorkItemIndex].status = newStatus;
+                    console.log(`✅ Updated global work item (everywhere): cumulative=${newCumulative}, remaining=${newRemaining}, status=${newStatus}`);
+                }
+
+                // Update work item inside asset if it exists
+                const asset = getAsset(deletedLog.asset_id);
+                if (asset && asset.work_items) {
+                    const assetWorkItem = asset.work_items.find(wi => wi.work_item_id === affectedWorkItem.work_item_id);
+                    if (assetWorkItem) {
+                        assetWorkItem.cumulative = newCumulative;
+                        assetWorkItem.remaining = newRemaining;
+                        assetWorkItem.status = newStatus;
+                        console.log(`✅ Updated asset work item (everywhere)`);
+                    }
+                }
+
+                // Re-render assets table to show updated progress
+                renderAssets();
+            }
 
             // Save to localStorage
             await saveFieldLogs();
+            await saveWorkItems();
+            if (getAsset(deletedLog.asset_id)) {
+                saveAssets();
+            }
 
             // Re-render the table
             renderFieldLogs();
