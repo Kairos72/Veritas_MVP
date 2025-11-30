@@ -7,6 +7,7 @@ let fieldLogs = [];
 let segments = []; // Kept for backwards compatibility
 let assets = [];      // New universal asset system
 let workItems = [];    // Work items within assets
+let deletedAssets = []; // Three-state deletion: Recently deleted assets
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
@@ -23,9 +24,11 @@ document.addEventListener('DOMContentLoaded', () => {
     window.loadFieldLogs();
     window.loadAssets();
     window.loadWorkItems();
+    window.loadDeletedAssets();
 
-    // Populate Field Entry dropdowns after data is loaded
+    // CRITICAL FIX: Initialize data synchronization after loading
     setTimeout(() => {
+        initializeDataSync();
         populateAssetSelect();
     }, 100);
     updateProjectSelect();
@@ -236,6 +239,48 @@ function saveWorkItems() {
     localStorage.setItem('veritas_work_items', JSON.stringify(workItems));
 }
 
+// Sync work items from assets to global workItems array
+function syncWorkItemsFromAssets() {
+    assets.forEach(asset => {
+        if (asset.work_items && asset.work_items.length > 0) {
+            asset.work_items.forEach(assetWorkItem => {
+                // Find if this work item exists in global array
+                const existingIndex = workItems.findIndex(wi => wi.work_item_id === assetWorkItem.work_item_id);
+
+                if (existingIndex !== -1) {
+                    // Update existing work item - preserve ALL progress data from global array
+                    const globalWorkItem = workItems[existingIndex];
+                    workItems[existingIndex] = {
+                        // Keep ALL existing global work item data (including progress!)
+                        ...globalWorkItem,
+                        // Only update basic metadata if missing
+                        work_type: globalWorkItem.work_type || assetWorkItem.work_type,
+                        item_code: globalWorkItem.item_code || assetWorkItem.item_code,
+                        unit: globalWorkItem.unit || assetWorkItem.unit,
+                        target_total: globalWorkItem.target_total || assetWorkItem.target_total,
+                        // CRITICAL FIX: NEVER overwrite progress data from assets!
+                        // cumulative, remaining, status should stay as they are in global array
+                    };
+                } else {
+                    // Add new work item to global array
+                    workItems.push({
+                        work_item_id: assetWorkItem.work_item_id,
+                        asset_id: asset.asset_id,
+                        work_type: assetWorkItem.work_type,
+                        item_code: assetWorkItem.item_code,
+                        unit: assetWorkItem.unit,
+                        target_total: assetWorkItem.target_total,
+                        cumulative: assetWorkItem.cumulative || 0,
+                        remaining: assetWorkItem.remaining || null,
+                        status: assetWorkItem.status || 'pending'
+                    });
+                }
+            });
+        }
+    });
+}
+
+
 // Load assets from LocalStorage
 window.loadAssets = function () {
     try {
@@ -270,6 +315,39 @@ window.loadWorkItems = function () {
     }
 };
 
+// Load deleted assets from localStorage
+window.loadDeletedAssets = function () {
+    try {
+        const savedDeletedAssets = localStorage.getItem('veritas_deleted_assets');
+        if (savedDeletedAssets) {
+            deletedAssets = JSON.parse(savedDeletedAssets);
+        } else {
+            deletedAssets = [];
+        }
+    } catch (error) {
+        console.error('Error loading deleted assets:', error);
+        deletedAssets = [];
+    }
+};
+
+// Save deleted assets to localStorage
+function saveDeletedAssets() {
+    try {
+        localStorage.setItem('veritas_deleted_assets', JSON.stringify(deletedAssets));
+    } catch (error) {
+        console.error('Error saving deleted assets:', error);
+    }
+}
+
+// Initialize data synchronization on startup
+function initializeDataSync() {
+    // CRITICAL FIX: Only sync work items from assets to global array on startup
+    // This ensures work items created via Asset Creation are available in global array
+    syncWorkItemsFromAssets();
+    // Save to ensure global work items are updated
+    saveWorkItems();
+}
+
 // Populate asset dropdown for Field Entry form
 function populateAssetSelect() {
     const assetSelect = document.getElementById('assetSelect');
@@ -297,10 +375,11 @@ function populateAssetSelect() {
 window.saveAsset = function (assetData) {
     const existingIndex = assets.findIndex(a => a.asset_id === assetData.asset_id);
 
-    // Add timestamps
+    // Add timestamps and ensure project_id is set
     const now = new Date().toISOString();
     const newAsset = {
         ...assetData,
+        project_id: assetData.project_id || activeProject?.project_id || localStorage.getItem('veritas_active_project') || 'PROJ-1',
         updated_at: now,
         created_at: assetData.created_at || now
     };
@@ -353,27 +432,260 @@ window.editAsset = function(assetId) {
     alert(`Edit asset: ${asset.name}\n\n(Edit modal to be implemented)`);
 }
 
-// Delete an asset
+// Delete an asset with three-state deletion system
 window.deleteAsset = function (assetId) {
-    const index = assets.findIndex(a => a.asset_id === assetId);
+    const asset = assets.find(a => a.asset_id === assetId);
+    if (!asset) {
+        console.error('Asset not found:', assetId);
+        return;
+    }
+
+    // Show deletion confirmation dialog with options
+    const deletionMessage = `Delete Asset: ${asset.name || asset.asset_id}\n\n` +
+        `Choose deletion option:\n` +
+        `1. Delete locally (can be restored)\n` +
+        `2. Delete permanently from cloud\n` +
+        `3. Cancel\n\n` +
+        `Option 1: Asset can be restored if sync runs\n` +
+        `Option 2: Permanent deletion from all systems`;
+
+    const choice = prompt(deletionMessage + '\nEnter choice (1-3):');
+
+    switch (choice) {
+        case '1':
+            // SOFT DELETE: Local deletion with recovery option
+            softDeleteAsset(asset, 'accidental');
+            break;
+        case '2':
+            // HARD DELETE: Request cloud deletion
+            const confirmPermanent = confirm(
+                `⚠️ PERMANENT DELETION WARNING\n\n` +
+                `This will permanently delete "${asset.name || asset.asset_id}" from:\n` +
+                `• Local device\n` +
+                `• Cloud database\n` +
+                `• All connected systems\n\n` +
+                `This action cannot be undone.\n\n` +
+                `Continue with permanent deletion?`
+            );
+            if (confirmPermanent) {
+                softDeleteAsset(asset, 'intentional');
+                // Mark for cloud deletion
+                const deletedAsset = deletedAssets.find(d => d.asset_id === assetId);
+                if (deletedAsset) {
+                    deletedAsset.cloud_delete_requested = true;
+                    deletedAsset.cloud_delete_requested_at = new Date().toISOString();
+                    saveDeletedAssets();
+                }
+            }
+            break;
+        case '3':
+        default:
+            // Cancel deletion
+            console.log('Deletion cancelled by user');
+            break;
+    }
+};
+
+// Soft delete asset (move to deleted assets)
+function softDeleteAsset(asset, deletionReason) {
+    const now = new Date().toISOString();
+
+    // Remove from active assets
+    const index = assets.findIndex(a => a.asset_id === asset.asset_id);
     if (index >= 0) {
         assets.splice(index, 1);
+    }
 
-        // Also delete associated work items
-        const workItemsToDelete = workItems.filter(wi => wi.asset_id === assetId);
-        workItemsToDelete.forEach(wi => {
-            const wiIndex = workItems.findIndex(w => w.work_item_id === wi.work_item_id);
-            if (wiIndex >= 0) {
-                workItems.splice(wiIndex, 1);
+    // Move associated work items to deleted asset structure
+    const associatedWorkItems = workItems.filter(wi => wi.asset_id === asset.asset_id);
+
+    // Remove work items from active workItems array
+    workItems = workItems.filter(wi => wi.asset_id !== asset.asset_id);
+
+    // Create deleted asset record
+    const deletedAsset = {
+        // Basic asset information
+        asset_id: asset.asset_id,
+        project_id: asset.project_id,
+        name: asset.name,
+        asset_type: asset.asset_type,
+        description: asset.description,
+        location: asset.location,
+
+        // 🎯 CRITICAL: Preserve all location and dimension fields
+        chainage_start_m: asset.chainage_start_m,
+        chainage_end_m: asset.chainage_end_m,
+        length_m: asset.length_m,
+        width_m: asset.width_m,
+        height_m: asset.height_m,
+        floor_area_m2: asset.floor_area_m2,
+        stationing: asset.stationing,
+        dimensions: asset.dimensions,
+
+        // Work items and deletion metadata
+        work_items: associatedWorkItems,
+        deleted_at: now,
+        deleted_by: 'user', // Could be enhanced with actual user info
+        deletion_reason: deletionReason, // 'accidental' | 'intentional'
+        cloud_delete_requested: false,
+        cloud_delete_requested_at: null,
+        cloud_deleted_at: null,
+        original_updated_at: asset.updated_at
+    };
+
+    // DEBUG: Log preserved location data
+    console.log('🔍 DEBUG: Asset deletion - preserving location data:', {
+        asset_id: asset.asset_id,
+        original_chainage: `${asset.chainage_start_m} -> ${asset.chainage_end_m}`,
+        preserved_chainage: `${deletedAsset.chainage_start_m} -> ${deletedAsset.chainage_end_m}`,
+        original_location: asset.location,
+        preserved_location: deletedAsset.location
+    });
+
+    // Add to deleted assets
+    deletedAssets.push(deletedAsset);
+
+    // Save everything
+    saveAssets();
+    saveWorkItems();
+    saveDeletedAssets();
+    renderAssets();
+    populateAssetSelect();
+
+    console.log(`Asset ${deletionReason === 'accidental' ? 'soft deleted' : 'marked for permanent deletion'}:`, asset.asset_id);
+}
+
+// Restore a deleted asset
+window.restoreAsset = function (assetId) {
+    const deletedAsset = deletedAssets.find(d => d.asset_id === assetId);
+    if (!deletedAsset) {
+        console.error('Deleted asset not found:', assetId);
+        return;
+    }
+
+    // Confirm restoration
+    const confirmRestore = confirm(
+        `Restore Asset: ${deletedAsset.name || deletedAsset.asset_id}\n\n` +
+        `This will restore the asset and all its work items.\n` +
+        `The asset will be available for field entries again.\n\n` +
+        `Continue with restoration?`
+    );
+
+    if (!confirmRestore) {
+        console.log('Asset restoration cancelled by user');
+        return;
+    }
+
+    // Recreate the asset from deleted record
+    const restoredAsset = {
+        // Basic asset information
+        asset_id: deletedAsset.asset_id,
+        project_id: deletedAsset.project_id,
+        name: deletedAsset.name,
+        asset_type: deletedAsset.asset_type,
+        description: deletedAsset.description,
+        location: deletedAsset.location,
+
+        // 🎯 CRITICAL: Restore all preserved location and dimension fields
+        chainage_start_m: deletedAsset.chainage_start_m,
+        chainage_end_m: deletedAsset.chainage_end_m,
+        length_m: deletedAsset.length_m,
+        width_m: deletedAsset.width_m,
+        height_m: deletedAsset.height_m,
+        floor_area_m2: deletedAsset.floor_area_m2,
+        stationing: deletedAsset.stationing,
+        dimensions: deletedAsset.dimensions,
+
+        // Work items and timestamps
+        work_items: deletedAsset.work_items || [],
+        updated_at: new Date().toISOString(), // Update restoration timestamp
+        created_at: deletedAsset.deleted_at // Keep original creation reference
+    };
+
+    // DEBUG: Log restored location data
+    console.log('🔍 DEBUG: Asset restoration - restoring location data:', {
+        asset_id: deletedAsset.asset_id,
+        deleted_chainage: `${deletedAsset.chainage_start_m} -> ${deletedAsset.chainage_end_m}`,
+        restored_chainage: `${restoredAsset.chainage_start_m} -> ${restoredAsset.chainage_end_m}`,
+        deleted_location: deletedAsset.location,
+        restored_location: restoredAsset.location,
+        location_info: getAssetLocationInfo(restoredAsset)
+    });
+
+    // Add back to active assets
+    assets.push(restoredAsset);
+
+    // Restore work items
+    if (deletedAsset.work_items && deletedAsset.work_items.length > 0) {
+        deletedAsset.work_items.forEach(workItem => {
+            // Check if work item already exists in active workItems
+            const existingIndex = workItems.findIndex(w => w.work_item_id === workItem.work_item_id);
+            if (existingIndex === -1) {
+                workItems.push(workItem);
             }
         });
-
-        saveAssets();
-        saveWorkItems();
-        renderAssets();
-        populateAssetSelect();
-        console.log('Deleted asset:', assetId);
     }
+
+    // Remove from deleted assets
+    const deletedIndex = deletedAssets.findIndex(d => d.asset_id === assetId);
+    if (deletedIndex >= 0) {
+        deletedAssets.splice(deletedIndex, 1);
+    }
+
+    // Save everything
+    saveAssets();
+    saveWorkItems();
+    saveDeletedAssets();
+    renderAssets();
+    populateAssetSelect();
+
+    console.log('Asset restored successfully:', assetId);
+};
+
+// Delete asset permanently from cloud
+window.deleteAssetFromCloud = function (assetId) {
+    const deletedAsset = deletedAssets.find(d => d.asset_id === assetId);
+    if (!deletedAsset) {
+        console.error('Deleted asset not found:', assetId);
+        return;
+    }
+
+    const confirmPermanent = confirm(
+        `⚠️ FINAL CONFIRMATION\n\n` +
+        `Permanently delete "${deletedAsset.name || deletedAsset.asset_id}"?\n\n` +
+        `This will:\n` +
+        `• Remove asset from cloud database\n` +
+        `• Delete all associated field logs\n` +
+        `• Remove from all connected devices\n` +
+        `• Delete permanently from this device\n\n` +
+        `This action CANNOT be undone.\n\n` +
+        `Proceed with permanent deletion?`
+    );
+
+    if (!confirmPermanent) {
+        console.log('Permanent deletion cancelled by user');
+        return;
+    }
+
+    // Remove asset from deletedAssets array completely - user wants it GONE
+    const deletedIndex = deletedAssets.findIndex(d => d.asset_id === assetId);
+    if (deletedIndex !== -1) {
+        deletedAssets.splice(deletedIndex, 1);
+    }
+
+    // Add to pending cloud deletions list for sync to handle
+    const pendingCloudDeletions = JSON.parse(localStorage.getItem('veritas_pending_cloud_deletions') || '[]');
+    if (!pendingCloudDeletions.includes(assetId)) {
+        pendingCloudDeletions.push(assetId);
+        localStorage.setItem('veritas_pending_cloud_deletions', JSON.stringify(pendingCloudDeletions));
+    }
+
+    // Save the updated deletedAssets list
+    saveDeletedAssets();
+    renderAssets();
+
+    console.log('Asset permanently deleted from local storage:', assetId);
+    alert('Asset has been permanently deleted. It will be removed from the cloud during the next sync.');
 };
 
 // Get asset by ID
@@ -579,46 +891,136 @@ window.renderAssets = function () {
 
     if (!tbody) return; // Not on assets tab
 
-    if (assets.length === 0) {
-        tbody.innerHTML = '';
+    tbody.innerHTML = '';
+
+    // RENDER ACTIVE ASSETS SECTION
+    if (assets.length === 0 && deletedAssets.length === 0) {
         noAssetsMsg.style.display = 'block';
         return;
     }
 
     noAssetsMsg.style.display = 'none';
-    tbody.innerHTML = '';
 
-    // Sort assets by type and name
-    const sortedAssets = [...assets].sort((a, b) => {
-        if (a.asset_type !== b.asset_type) {
-            return a.asset_type.localeCompare(b.asset_type);
-        }
-        return a.name.localeCompare(b.name);
-    });
-
-    sortedAssets.forEach(asset => {
-        const assetWorkItems = getWorkItemsForAsset(asset.asset_id);
-        const totalProgress = calculateAssetProgress(asset);
-        const locationInfo = getAssetLocationInfo(asset);
-
-        const row = document.createElement('tr');
-        row.innerHTML = `
-            <td><strong>${asset.asset_id}</strong></td>
-            <td>${asset.name}</td>
-            <td>${formatAssetType(asset.asset_type)}</td>
-            <td>${locationInfo}</td>
-            <td>${assetWorkItems.length} items</td>
-            <td>${totalProgress}</td>
-            <td>
-                <div style="display: flex; gap: 4px;">
-                    <button onclick="viewAsset('${asset.asset_id}')" style="background: none; border: none; cursor: pointer; font-size: 1.2em;" title="View Details">👁️</button>
-                    <button onclick="editAsset('${asset.asset_id}')" style="background: none; border: none; cursor: pointer; font-size: 1.2em;" title="Edit">✏️</button>
-                    <button onclick="deleteAsset('${asset.asset_id}')" style="background: none; border: none; cursor: pointer; font-size: 1.2em; color: #ef4444;" title="Delete">🗑️</button>
-                </div>
+    // Active Assets Section Header
+    if (assets.length > 0) {
+        const headerRow = document.createElement('tr');
+        headerRow.innerHTML = `
+            <td colspan="7" style="background-color: #f3f4f6; font-weight: bold; padding: 8px; text-align: center;">
+                📋 Active Assets (${assets.length})
             </td>
         `;
-        tbody.appendChild(row);
-    });
+        tbody.appendChild(headerRow);
+
+        // Table headers for active assets
+        const headersRow = document.createElement('tr');
+        headersRow.innerHTML = `
+            <th style="padding: 8px;">Asset ID</th>
+            <th style="padding: 8px;">Name</th>
+            <th style="padding: 8px;">Type</th>
+            <th style="padding: 8px;">Location</th>
+            <th style="padding: 8px;">Work Items</th>
+            <th style="padding: 8px;">Progress</th>
+            <th style="padding: 8px;">Actions</th>
+        `;
+        tbody.appendChild(headersRow);
+
+        // Sort assets by type and name
+        const sortedAssets = [...assets].sort((a, b) => {
+            if (a.asset_type !== b.asset_type) {
+                return a.asset_type.localeCompare(b.asset_type);
+            }
+            return a.name.localeCompare(b.name);
+        });
+
+        sortedAssets.forEach(asset => {
+            const assetWorkItems = getWorkItemsForAsset(asset.asset_id);
+            const totalProgress = calculateAssetProgress(asset);
+            const locationInfo = getAssetLocationInfo(asset);
+
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td style="padding: 8px;"><strong>${asset.asset_id}</strong></td>
+                <td style="padding: 8px;">${asset.name}</td>
+                <td style="padding: 8px;">${formatAssetType(asset.asset_type)}</td>
+                <td style="padding: 8px;">${locationInfo}</td>
+                <td style="padding: 8px;">${assetWorkItems.length} items</td>
+                <td style="padding: 8px;">${totalProgress}</td>
+                <td style="padding: 8px;">
+                    <div style="display: flex; gap: 4px;">
+                        <button onclick="viewAsset('${asset.asset_id}')" style="background: none; border: none; cursor: pointer; font-size: 1.2em;" title="View Details">👁️</button>
+                        <button onclick="editAsset('${asset.asset_id}')" style="background: none; border: none; cursor: pointer; font-size: 1.2em;" title="Edit">✏️</button>
+                        <button onclick="deleteAsset('${asset.asset_id}')" style="background: none; border: none; cursor: pointer; font-size: 1.2em; color: #ef4444;" title="Delete">🗑️</button>
+                    </div>
+                </td>
+            `;
+            tbody.appendChild(row);
+        });
+    }
+
+    // RECENTLY DELETED ASSETS SECTION
+    if (deletedAssets.length > 0) {
+        // Add spacer
+        const spacerRow = document.createElement('tr');
+        spacerRow.innerHTML = `<td colspan="7" style="height: 20px;"></td>`;
+        tbody.appendChild(spacerRow);
+
+        // Recently Deleted Section Header
+        const deletedHeaderRow = document.createElement('tr');
+        deletedHeaderRow.innerHTML = `
+            <td colspan="7" style="background-color: #fef2f2; font-weight: bold; padding: 8px; text-align: center; color: #dc2626;">
+                🗑️ Recently Deleted (${deletedAssets.length})
+            </td>
+        `;
+        tbody.appendChild(deletedHeaderRow);
+
+        // Table headers for deleted assets
+        const deletedHeadersRow = document.createElement('tr');
+        deletedHeadersRow.innerHTML = `
+            <th style="padding: 8px; color: #dc2626;">Asset ID</th>
+            <th style="padding: 8px; color: #dc2626;">Name</th>
+            <th style="padding: 8px; color: #dc2626;">Type</th>
+            <th style="padding: 8px; color: #dc2626;">Deleted</th>
+            <th style="padding: 8px; color: #dc2626;">Work Items</th>
+            <th style="padding: 8px; color: #dc2626;">Reason</th>
+            <th style="padding: 8px; color: #dc2626;">Actions</th>
+        `;
+        tbody.appendChild(deletedHeadersRow);
+
+        // Sort deleted assets by deletion date (most recent first)
+        const sortedDeletedAssets = [...deletedAssets].sort((a, b) =>
+            new Date(b.deleted_at) - new Date(a.deleted_at)
+        );
+
+        sortedDeletedAssets.forEach(deletedAsset => {
+            const deletedDate = new Date(deletedAsset.deleted_at).toLocaleDateString();
+            const deletedTime = new Date(deletedAsset.deleted_at).toLocaleTimeString();
+            const workItemsCount = deletedAsset.work_items ? deletedAsset.work_items.length : 0;
+
+            const deletionReasonText = deletedAsset.deletion_reason === 'accidental' ? 'Local Delete' : 'Permanent Request';
+            const reasonColor = deletedAsset.deletion_reason === 'accidental' ? '#059669' : '#dc2626';
+
+            const row = document.createElement('tr');
+            row.style.backgroundColor = '#fef2f2';
+            row.innerHTML = `
+                <td style="padding: 8px; color: #dc2626;"><strong>${deletedAsset.asset_id}</strong></td>
+                <td style="padding: 8px; color: #dc2626;">${deletedAsset.name}</td>
+                <td style="padding: 8px; color: #dc2626;">${formatAssetType(deletedAsset.asset_type)}</td>
+                <td style="padding: 8px; color: #dc2626; font-size: 0.9em;">${deletedDate}<br>${deletedTime}</td>
+                <td style="padding: 8px; color: #dc2626;">${workItemsCount} items</td>
+                <td style="padding: 8px; color: ${reasonColor}; font-weight: bold;">${deletionReasonText}</td>
+                <td style="padding: 8px;">
+                    <div style="display: flex; gap: 4px;">
+                        <button onclick="restoreAsset('${deletedAsset.asset_id}')" style="background: none; border: none; cursor: pointer; font-size: 1.2em; color: #059669;" title="Restore Asset">↩️</button>
+                        ${!deletedAsset.cloud_delete_requested ?
+                            `<button onclick="deleteAssetFromCloud('${deletedAsset.asset_id}')" style="background: none; border: none; cursor: pointer; font-size: 1.2em; color: #dc2626;" title="Delete Permanently">☠️</button>` :
+                            `<span style="color: #dc2626; font-size: 0.8em;">🗑️ Pending</span>`
+                        }
+                    </div>
+                </td>
+            `;
+            tbody.appendChild(row);
+        });
+    }
 };
 
 // Format asset type for display
@@ -655,6 +1057,7 @@ function getAssetLocationInfo(asset) {
 // Calculate overall progress for an asset
 function calculateAssetProgress(asset) {
     const assetWorkItems = getWorkItemsForAsset(asset.asset_id);
+
     if (assetWorkItems.length === 0) return 'No work items';
 
     let totalProgress = 0;
@@ -1083,20 +1486,39 @@ function fixMissingProjectIds(logs) {
     return fixedLogs;
 }
 
+// Get actual storage quota from browser
+async function getActualStorageQuota() {
+    try {
+        const estimate = await navigator.storage.estimate();
+        const quota = estimate.quota || 10 * 1024 * 1024; // Default to 10MB if not available
+        const usage = estimate.usage || 0;
+        return { quota, usage, percentUsed: (usage / quota) * 100 };
+    } catch (error) {
+        console.warn('Could not get storage estimate, using fallback:', error);
+        const storageUsed = JSON.stringify(localStorage).length;
+        return { quota: 10 * 1024 * 1024, usage: storageUsed, percentUsed: (storageUsed / (10 * 1024 * 1024)) * 100 };
+    }
+}
+
 // Save field logs to LocalStorage
-function saveFieldLogs() {
+async function saveFieldLogs() {
     try {
         const jsonString = JSON.stringify(fieldLogs);
 
-        // Check storage quota before saving
-        const storageUsed = JSON.stringify(localStorage).length;
-        const storageQuota = 5 * 1024 * 1024; // 5MB estimate
+        // Get actual storage quota from browser
+        const storageInfo = await getActualStorageQuota();
 
-        if (storageUsed > storageQuota * 0.8) { // 80% warning threshold
-            console.warn('LocalStorage approaching quota limit');
+        if (storageInfo.percentUsed > 85) { // Warning at 85% with real quota
+            const storageMB = (storageInfo.usage / (1024 * 1024)).toFixed(2);
+            const quotaMB = (storageInfo.quota / (1024 * 1024)).toFixed(1);
+            const shouldContinue = confirm(
+                `Storage usage: ${storageMB} MB (${storageInfo.percentUsed.toFixed(1)}% of ${quotaMB}MB quota)\n\n` +
+                'Storage is almost full. Consider exporting old data to free up space. Continue saving?'
+            );
 
-            // Try to free up space by compressing old photos
-            cleanupOldPhotos();
+            if (!shouldContinue) {
+                return; // Cancel the operation - no data lost
+            }
         }
 
         localStorage.setItem('veritas_field_logs', jsonString);
@@ -1111,9 +1533,8 @@ function saveFieldLogs() {
         }
     } catch (error) {
         if (error.name === 'QuotaExceededError') {
-            alert('Storage full! Please export and clear some data, or delete old photos.');
-            // Try to free up space immediately
-            emergencyCleanup();
+            alert('Storage full! Please export data to continue. No data was lost.\n\nGo to Settings → Export Data to free up space.');
+            // Don't delete anything automatically - user must choose
         } else {
             console.error('Error saving field logs:', error);
         }
@@ -1122,38 +1543,50 @@ function saveFieldLogs() {
 
 // --- Photo Compression ---
 
-function compressPhoto(base64String, maxWidth = 800, quality = 0.6) {
+function compressPhoto(base64String, targetSizeKB = 100) {
     return new Promise((resolve) => {
         const img = new Image();
         img.onload = function() {
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d');
 
-            // Calculate new dimensions
+            // Start with original dimensions
             let { width, height } = img;
-            if (width > maxWidth) {
-                height = (maxWidth / width) * height;
-                width = maxWidth;
+            const maxDimension = 800;
+
+            // Scale down if needed
+            if (width > maxDimension || height > maxDimension) {
+                const scale = Math.min(maxDimension / width, maxDimension / height);
+                width *= scale;
+                height *= scale;
             }
 
             canvas.width = width;
             canvas.height = height;
-
-            // Draw and compress
             ctx.drawImage(img, 0, 0, width, height);
 
-            // Try to get smaller size
-            let compressed = canvas.toDataURL('image/jpeg', quality);
+            // Try different quality levels to reach target size
+            let quality = 0.8;
+            let result = canvas.toDataURL('image/jpeg', quality);
 
-            // If still too large, compress more
-            if (compressed.length > 500000) { // 500KB limit
-                compressed = canvas.toDataURL('image/jpeg', 0.3);
-            }
-            if (compressed.length > 300000) { // 300KB limit
-                compressed = canvas.toDataURL('image/jpeg', 0.2);
+            // Reduce quality if too large
+            while (result.length > targetSizeKB * 1024 && quality > 0.1) {
+                quality -= 0.1;
+                result = canvas.toDataURL('image/jpeg', quality);
             }
 
-            resolve(compressed);
+            // Final check: if still too large, reduce dimensions
+            if (result.length > targetSizeKB * 1024) {
+                const smallerScale = Math.sqrt(targetSizeKB * 1024 / result.length);
+                canvas.width *= smallerScale;
+                canvas.height *= smallerScale;
+                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                result = canvas.toDataURL('image/jpeg', 0.6);
+            }
+
+            const finalSizeKB = Math.round(result.length / 1024);
+            console.log(`Photo compressed: ${finalSizeKB}KB (target: ${targetSizeKB}KB, quality: ${quality.toFixed(1)})`);
+            resolve(result);
         };
         img.src = base64String;
     });
@@ -1162,79 +1595,205 @@ function compressPhoto(base64String, maxWidth = 800, quality = 0.6) {
 // --- Storage Management ---
 
 function cleanupOldPhotos() {
-    console.log('Cleaning up old photos to free storage space...');
-
-    // Be more aggressive - keep only the last 20 photos
     const photoLogs = fieldLogs.filter(log => log.photo_base64);
-    const oldPhotoCount = photoLogs.length;
 
-    if (oldPhotoCount > 0) {
-        // Remove ALL photos if more than 20, or oldest if less
-        const photosToKeep = Math.min(20, Math.floor(oldPhotoCount * 0.3)); // Keep 30% max
-        photoLogs.sort((a, b) => new Date(a.date) - new Date(b.date));
+    if (photoLogs.length === 0) {
+        alert('No photos to clean up.');
+        return;
+    }
 
-        // Remove everything except the most recent ones
-        const photosToRemove = oldPhotoCount - photosToKeep;
+    const totalSize = photoLogs.reduce((sum, log) => sum + log.photo_base64.length, 0);
+    const sizeMB = (totalSize / (1024 * 1024)).toFixed(2);
 
-        photoLogs.slice(0, photosToRemove).forEach(log => {
+    const message =
+        `Photo Cleanup Options\n\n` +
+        `Current photos: ${photoLogs.length}\n` +
+        `Total size: ${sizeMB} MB\n\n` +
+        `Choose an option:\n` +
+        `1. Compress all photos to 100KB each\n` +
+        `2. Delete photos older than 30 days\n` +
+        `3. Keep only 50 most recent photos\n` +
+        `4. Export photos and delete from device\n` +
+        `5. Cancel - do nothing`;
+
+    const choice = prompt(message + '\n\nEnter choice (1-5):');
+
+    switch(choice) {
+        case '1':
+            compressAllPhotos();
+            break;
+        case '2':
+            deleteOldPhotos(30);
+            break;
+        case '3':
+            keepRecentPhotos(50);
+            break;
+        case '4':
+            exportAndCleanPhotos();
+            break;
+        case '5':
+        default:
+            return; // Do nothing
+    }
+}
+
+async function compressAllPhotos() {
+    console.log('Compressing all photos...');
+    const photoLogs = fieldLogs.filter(log => log.photo_base64);
+    let compressedCount = 0;
+
+    for (const log of photoLogs) {
+        if (log.photo_base64) {
+            const originalSize = Math.round(log.photo_base64.length / 1024);
+            log.photo_base64 = await compressPhoto(log.photo_base64, 100);
+            const newSize = Math.round(log.photo_base64.length / 1024);
+            console.log(`Compressed photo: ${originalSize}KB → ${newSize}KB`);
+            compressedCount++;
+        }
+    }
+
+    await saveFieldLogs();
+    alert(`Compressed ${compressedCount} photos to ~100KB each.`);
+}
+
+function deleteOldPhotos(daysOld) {
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - daysOld);
+
+    const photosToDelete = fieldLogs.filter(log =>
+        log.photo_base64 && new Date(log.date) < cutoffDate
+    );
+
+    if (photosToDelete.length === 0) {
+        alert(`No photos older than ${daysOld} days found.`);
+        return;
+    }
+
+    const confirmed = confirm(`Delete ${photosToDelete.length} photos older than ${daysOld} days?\n\n` +
+        `Photos will be removed from local device only. Cloud photos will be preserved.`);
+
+    if (confirmed) {
+        photosToDelete.forEach(log => {
             const index = fieldLogs.findIndex(l => l.entry_id === log.entry_id);
             if (index !== -1) {
                 fieldLogs[index].photo_base64 = null;
-                fieldLogs[index].photo_removed = true;
+                fieldLogs[index].photo_removed_for_space = true;
             }
         });
 
-        console.log(`Removed ${photosToRemove} old photos, keeping ${photosToKeep} recent ones`);
+        saveFieldLogs().then(() => {
+            alert(`Deleted ${photosToDelete.length} old photos from local device.`);
+            renderFieldLogs(); // Refresh the display
+        });
+    }
+}
 
-        // Save the cleaned up logs
-        try {
-            const cleanedJson = JSON.stringify(fieldLogs);
-            console.log(`New field logs size: ${Math.round(cleanedJson.length / 1024)}KB`);
+function keepRecentPhotos(count) {
+    const photoLogs = fieldLogs.filter(log => log.photo_base64);
 
-            localStorage.setItem('veritas_field_logs', cleanedJson);
+    if (photoLogs.length <= count) {
+        alert(`Only ${photoLogs.length} photos exist. No cleanup needed.`);
+        return;
+    }
 
-            // Check if it fits now
-            const storageUsed = JSON.stringify(localStorage).length;
-            const storageMB = (storageUsed / (1024 * 1024)).toFixed(2);
-            console.log(`Total storage after cleanup: ${storageMB}MB`);
+    const toDelete = photoLogs.length - count;
 
-        } catch (error) {
-            console.error('Still too large after cleanup, removing all photos');
-            // More aggressive - remove all photos
-            fieldLogs.forEach(log => {
-                if (log.photo_base64) {
-                    log.photo_base64 = null;
-                    log.photo_removed = true;
-                }
-            });
+    const confirmed = confirm(`Delete ${toDelete} oldest photos, keeping ${count} most recent?\n\n` +
+        `Photos will be removed from local device only. Cloud photos will be preserved.`);
 
-            try {
-                localStorage.setItem('veritas_field_logs', JSON.stringify(fieldLogs));
-                console.log('All photos removed - storage freed');
-            } catch (error) {
-                console.error('Even removing all photos failed');
+    if (confirmed) {
+        photoLogs.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+        photoLogs.slice(count).forEach(log => {
+            const index = fieldLogs.findIndex(l => l.entry_id === log.entry_id);
+            if (index !== -1) {
+                fieldLogs[index].photo_base64 = null;
+                fieldLogs[index].photo_removed_for_space = true;
             }
-        }
+        });
+
+        saveFieldLogs().then(() => {
+            alert(`Deleted ${toDelete} old photos, kept ${count} recent ones.`);
+            renderFieldLogs(); // Refresh the display
+        });
+    }
+}
+
+function exportAndCleanPhotos() {
+    if (confirm('Export all data first? This will create a backup file with all photos.')) {
+        exportData();
+        setTimeout(() => {
+            if (confirm('Data exported. Now delete all photos from local device?')) {
+                const photoCount = fieldLogs.filter(log => log.photo_base64).length;
+
+                fieldLogs.forEach(log => {
+                    if (log.photo_base64) {
+                        log.photo_base64 = null;
+                        log.photo_removed_for_space = true;
+                    }
+                });
+
+                saveFieldLogs().then(() => {
+                    alert(`Removed ${photoCount} photos from local device. Your backup contains all photos.`);
+                    renderFieldLogs(); // Refresh the display
+                });
+            }
+        }, 2000);
     }
 }
 
 function emergencyCleanup() {
-    console.log('Emergency cleanup - removing all photos');
+    const message =
+        '⚠️ CRITICAL: Storage completely full!\n\n' +
+        'Options to resolve:\n' +
+        '1. Export all data (recommended)\n' +
+        '2. Delete all photos permanently from local only\n' +
+        '3. Cancel and try manual cleanup';
 
-    fieldLogs.forEach(log => {
-        if (log.photo_base64) {
-            log.photo_base64 = null;
-            log.photo_removed = true;
-        }
-    });
+    const choice = prompt(message + '\n\nEnter choice (1-3):');
 
-    try {
-        localStorage.setItem('veritas_field_logs', JSON.stringify(fieldLogs));
-        alert('Emergency cleanup complete! All photos have been removed to free storage space.');
-    } catch (error) {
-        console.error('Even emergency cleanup failed');
-        alert('Critical: Unable to save data. Please export and clear all data.');
+    switch(choice) {
+        case '1':
+            exportData();
+            setTimeout(() => {
+                if (confirm('Data exported. Clear all local data now?')) {
+                    clearAllLocalData();
+                }
+            }, 1000);
+            break;
+        case '2':
+            if (confirm('⚠️ WARNING: This will permanently delete ALL photos from local storage only. Cloud photos will be preserved. Continue?')) {
+                fieldLogs.forEach(log => {
+                    if (log.photo_base64) {
+                        log.photo_base64 = null;
+                        log.photo_removed_emergency = true; // Special flag for emergency deletions
+                    }
+                });
+                try {
+                    localStorage.setItem('veritas_field_logs', JSON.stringify(fieldLogs));
+                    alert('All photos deleted from local storage only. Cloud photos preserved.');
+                } catch (error) {
+                    console.error('Emergency cleanup failed:', error);
+                    alert('Unable to free space. Please export all data.');
+                }
+            }
+            break;
+        case '3':
+        default:
+            return; // Do nothing
     }
+}
+
+function clearAllLocalData() {
+    localStorage.removeItem('veritas_projects');
+    localStorage.removeItem('veritas_segments'); // Legacy compatibility
+    localStorage.removeItem('veritas_assets');
+    localStorage.removeItem('veritas_work_items');
+    localStorage.removeItem('veritas_field_logs');
+    localStorage.removeItem('veritas_user');
+
+    // Reload page to clean state
+    window.location.reload();
 }
 
 function getStorageInfo() {
@@ -1252,36 +1811,45 @@ function getStorageInfo() {
     return { storageUsedKB, fieldLogsKB, photoCount: fieldLogs.filter(l => l.photo_base64).length };
 }
 
-function showStorageInfo() {
+async function showStorageInfo() {
+    const storageInfo = await getActualStorageQuota();
     const info = getStorageInfo();
-    const estimatedQuotaMB = 5; // Most browsers ~5MB limit
-    const percentUsed = ((info.storageUsedKB / 1024) / estimatedQuotaMB * 100).toFixed(1);
+
+    // Calculate photo storage details
+    const photoLogs = fieldLogs.filter(log => log.photo_base64);
+    const totalPhotoSize = photoLogs.reduce((sum, log) => sum + log.photo_base64.length, 0);
+    const photoSizeMB = (totalPhotoSize / (1024 * 1024)).toFixed(2);
+    const avgPhotoSizeKB = photoLogs.length > 0 ? Math.round(totalPhotoSize / photoLogs.length / 1024) : 0;
 
     const message = `
 Storage Usage Information:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Total Used: ${info.storageUsedKB} KB (${(info.storageUsedKB / 1024).toFixed(2)} MB)
 Field Logs: ${info.fieldLogsKB} KB
-Photos: ${info.photoCount} photos stored
-Est. Usage: ${percentUsed}% of ~${estimatedQuotaMB}MB quota
+Photos: ${info.photoCount} photos (${photoSizeMB} MB)
+Average Photo: ${avgPhotoSizeKB} KB
+Actual Usage: ${storageInfo.percentUsed.toFixed(1)}% of ${(storageInfo.quota / (1024 * 1024)).toFixed(1)}MB quota
 
-${percentUsed > 80 ? '⚠️  WARNING: Approaching storage limit!' : '✅ Storage usage is normal'}
+${storageInfo.percentUsed > 90 ? '⚠️  CRITICAL: Storage almost full!' :
+  storageInfo.percentUsed > 75 ? '⚠️  WARNING: Storage getting full!' :
+  '✅ Storage usage is normal'}
 
-Recommendations:
-• Export data regularly to free up space
-• Consider deleting old photos after syncing
-• Use cloud sync to backup photos
-• Try "Clear All Data" if sync is failing
-${percentUsed > 80 ? '\n⚠️  Action needed: Export data and clear old photos' : ''}
+Recommended Actions:
+${storageInfo.percentUsed > 90 ? '• Export data immediately\n• Run photo cleanup (compress or delete old photos)' :
+  storageInfo.percentUsed > 75 ? '• Export data soon\n• Consider photo compression\n• Run photo cleanup' :
+  '• Export data regularly for backup'}
+• Use cloud sync to preserve photos
+• Average photo size should be under 150KB
     `.trim();
 
-    if (confirm(message + '\n\nWould you like to export your data now to free up space?')) {
-        exportData();
+    if (confirm(message + '\n\nWould you like to run photo cleanup now?')) {
+        cleanupOldPhotos();
     }
 
-    if (percentUsed > 90 && confirm('Storage is critically full! Would you like to remove old photos now? (This will free significant space)')) {
-        cleanupOldPhotos();
-        alert('Cleanup completed! Old photos have been removed from local storage.');
+    if (storageInfo.percentUsed > 90) {
+        if (confirm('Storage is critically full! Export data now?')) {
+            exportData();
+        }
     }
 }
 
@@ -1294,6 +1862,7 @@ This action will:
 • Remove all assets from local storage
 • Remove all work items from local storage
 • Remove all field logs from local storage
+• Remove all recently deleted assets from local storage
 • Clear all photos from local storage
 • NOT affect cloud data (if synced)
 
@@ -1316,7 +1885,9 @@ Are you absolutely sure you want to proceed?
     localStorage.removeItem('veritas_work_items');
     localStorage.removeItem('veritas_segments');
     localStorage.removeItem('veritas_field_logs');
+    localStorage.removeItem('veritas_deleted_assets');
     localStorage.removeItem('veritas_active_project');
+    localStorage.removeItem('veritas_pending_cloud_deletions');
 
     // Reset in-memory variables
     projects = [];
@@ -1324,6 +1895,7 @@ Are you absolutely sure you want to proceed?
     workItems = [];
     fieldLogs = [];
     segments = [];
+    deletedAssets = []; // Reset recently deleted assets
     activeProject = null;
 
     // Refresh the UI
@@ -1332,9 +1904,11 @@ Are you absolutely sure you want to proceed?
     window.loadWorkItems();
     window.loadSegments();
     window.loadFieldLogs();
+    window.loadDeletedAssets(); // Load deleted assets (should be empty now)
     updateProjectSelect();
     populateAssetSelect();
     updateSegmentSelect();
+    renderAssets(); // Refresh assets display (should show no recently deleted items)
 
     // Clear project selection UI
     document.getElementById('projectSelect').value = '';
@@ -1424,6 +1998,45 @@ Are you absolutely sure you want to proceed?
 
         if (deletedItems.length > 0) {
             alert(`✅ Cloud data cleared successfully!\n\nDeleted: ${deletedItems.join(', ')}\n\nThe cloud is now completely empty.`);
+
+            // Also clear local data since user wants complete reset
+            const clearLocalToo = confirm('Cloud data cleared! Would you also like to clear all local data for a complete fresh start?');
+            if (clearLocalToo) {
+                // Clear local deleted assets too
+                localStorage.removeItem('veritas_deleted_assets');
+                deletedAssets = [];
+
+                // Clear all other local data
+                localStorage.removeItem('veritas_projects');
+                localStorage.removeItem('veritas_assets');
+                localStorage.removeItem('veritas_work_items');
+                localStorage.removeItem('veritas_segments');
+                localStorage.removeItem('veritas_field_logs');
+                localStorage.removeItem('veritas_active_project');
+                localStorage.removeItem('veritas_pending_cloud_deletions');
+
+                // Reset in-memory variables
+                projects = [];
+                assets = [];
+                workItems = [];
+                fieldLogs = [];
+                segments = [];
+                activeProject = null;
+
+                // Refresh UI
+                window.loadProjects();
+                window.loadAssets();
+                window.loadWorkItems();
+                window.loadSegments();
+                window.loadFieldLogs();
+                window.loadDeletedAssets();
+                updateProjectSelect();
+                populateAssetSelect();
+                updateSegmentSelect();
+                renderAssets();
+
+                alert('✅ Complete reset successful! All cloud and local data has been cleared.');
+            }
         } else {
             alert('⚠️ No data was deleted or there were errors.');
         }
@@ -1685,7 +2298,6 @@ function matchOrCreateWorkItem(assetId, workType, itemCode, quantityToday) {
     if (itemCode) {
         const matchByCode = assetWorkItems.find(wi => wi.item_code === itemCode);
         if (matchByCode) {
-            console.log(`🎯 Matched by item_code: ${itemCode} → ${matchByCode.work_item_id}`);
             return matchByCode;
         }
     }
@@ -1696,7 +2308,6 @@ function matchOrCreateWorkItem(assetId, workType, itemCode, quantityToday) {
         workType.toLowerCase().includes(wi.work_type.toLowerCase())
     );
     if (matchByType) {
-        console.log(`🎯 Matched by work_type: "${workType}" → "${matchByType.work_type}" (${matchByType.work_item_id})`);
         return matchByType;
     }
 
@@ -1729,7 +2340,6 @@ function matchOrCreateWorkItem(assetId, workType, itemCode, quantityToday) {
     saveAssets();
     saveWorkItems();
 
-    console.log(`🆕 Auto-created new work item: ${newWorkItemId} - ${workType}`);
     return newWorkItem;
 }
 
@@ -1817,12 +2427,12 @@ function exportData() {
     URL.revokeObjectURL(url);
 }
 
-function importData(event) {
+async function importData(event) {
     const file = event.target.files[0];
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = function (e) {
+    reader.onload = async function (e) {
         try {
             const data = JSON.parse(e.target.result);
 
@@ -1915,7 +2525,7 @@ function importData(event) {
             saveProjects();
             saveAssets();
             saveWorkItems();
-            saveFieldLogs();
+            await saveFieldLogs();
             updateProjectSelect(activeProject ? activeProject.project_id : "");
 
             event.target.value = '';
@@ -2097,7 +2707,7 @@ function handleFileSelect(e) {
 document.getElementById('fieldPhoto').addEventListener('change', handleFileSelect);
 document.getElementById('fieldPhotoCamera').addEventListener('change', handleFileSelect);
 
-document.getElementById('fieldForm').addEventListener('submit', (e) => {
+document.getElementById('fieldForm').addEventListener('submit', async (e) => {
     e.preventDefault();
 
     if (!activeProject) {
@@ -2166,23 +2776,43 @@ document.getElementById('fieldForm').addEventListener('submit', (e) => {
     const newCumulative = prevCumulative + numericQuantity;
     const newRemaining = workItem.target_total ? Math.max(0, workItem.target_total - newCumulative) : null;
 
-    // Update work item progress
-    workItem.cumulative = newCumulative;
-    workItem.remaining = newRemaining;
-    if (newRemaining === 0) {
-        workItem.status = 'completed';
-    } else if (numericQuantity > 0) {
-        workItem.status = 'in_progress';
+  
+    // CRITICAL FIX: Update the work item in the global workItems array directly
+    const globalWorkItemIndex = workItems.findIndex(wi => wi.work_item_id === workItem.work_item_id && wi.asset_id === assetId);
+
+    if (globalWorkItemIndex !== -1) {
+        // Update the actual object in the global array
+        workItems[globalWorkItemIndex].cumulative = newCumulative;
+        workItems[globalWorkItemIndex].remaining = newRemaining;
+        if (newRemaining === 0) {
+            workItems[globalWorkItemIndex].status = 'completed';
+        } else if (numericQuantity > 0) {
+            workItems[globalWorkItemIndex].status = 'in_progress';
+        }
+
+        // Also update the local workItem object reference for consistency
+        workItem.cumulative = newCumulative;
+        workItem.remaining = newRemaining;
+        workItem.status = workItems[globalWorkItemIndex].status;
     }
 
-    // Save updated work item
+    // CRITICAL FIX: Also update the work item inside the asset
+    const asset = getAsset(assetId);
+    if (asset && asset.work_items) {
+        const assetWorkItem = asset.work_items.find(wi => wi.work_item_id === workItem.work_item_id);
+        if (assetWorkItem) {
+            assetWorkItem.cumulative = newCumulative;
+            assetWorkItem.remaining = newRemaining;
+            assetWorkItem.status = workItem.status;
+        }
+    }
+
+    // Save updated work item and asset
     saveAssets();
     saveWorkItems();
 
     // Calculate asset overall progress
-    const asset = getAsset(assetId);
     const assetProgress = calculateAssetProgress(asset);
-    console.log(`📊 Asset progress: ${assetProgress.overallProgress}% (${assetProgress.completedWorkItems}/${assetProgress.totalWorkItems} work items)`);
 
     // Check both inputs for a file
     const photoInput = document.getElementById('fieldPhoto');
@@ -2197,7 +2827,7 @@ document.getElementById('fieldForm').addEventListener('submit', (e) => {
 
     let photoBase64 = null;
 
-    const processEntry = (base64Img) => {
+    const processEntry = async (base64Img) => {
         let entryId;
         let attempts = 0;
         const maxAttempts = 10;
@@ -2237,7 +2867,7 @@ document.getElementById('fieldForm').addEventListener('submit', (e) => {
         };
 
         fieldLogs.push(entry);
-        saveFieldLogs();
+        await saveFieldLogs();
         renderFieldLogs();
 
         // Reset fields
@@ -2263,12 +2893,16 @@ document.getElementById('fieldForm').addEventListener('submit', (e) => {
 
     if (file) {
         const reader = new FileReader();
-        reader.onload = function (e) {
-            processEntry(e.target.result);
+        reader.onload = async function (e) {
+            // Compress the photo before processing
+            console.log('Compressing photo before saving...');
+            const compressedPhoto = await compressPhoto(e.target.result, 150); // Target 150KB
+            console.log('Photo compression completed');
+            await processEntry(compressedPhoto);
         };
         reader.readAsDataURL(file);
     } else {
-        processEntry(null);
+        await processEntry(null);
     }
 });
 
@@ -2418,7 +3052,7 @@ function renderFieldLogs() {
 }
 
 // Delete field log locally only
-window.deleteFieldLogLocal = function(entryId) {
+window.deleteFieldLogLocal = async function(entryId) {
     if (!entryId) {
         alert('Cannot delete log: No entry ID found');
         return;
@@ -2451,7 +3085,7 @@ This action cannot be undone!
         fieldLogs.splice(index, 1);
 
         // Save to localStorage
-        saveFieldLogs();
+        await saveFieldLogs();
 
         // Re-render the table
         renderFieldLogs();
@@ -2525,7 +3159,7 @@ This will delete from:
             fieldLogs.splice(index, 1);
 
             // Save to localStorage
-            saveFieldLogs();
+            await saveFieldLogs();
 
             // Re-render the table
             renderFieldLogs();
